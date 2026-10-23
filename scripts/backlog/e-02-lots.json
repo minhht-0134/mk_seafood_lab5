@@ -1,0 +1,957 @@
+{
+  "epic": {
+    "key": "E-02",
+    "title": "E-02 Lot (lots)",
+    "goal": "Tiếp nhận lot, ghi nhận 目利き, xác nhận số lượng khả dụng và công khai, sửa lỗi thuộc tính lot, nhập tạm offline cho F-006 và F-007, và ba helper số dư dùng chung cho giao dịch và điều chỉnh.",
+    "specs": [
+      "FR-LOT-001..005",
+      "design/lots",
+      "LOT_DB",
+      "ADR-009"
+    ],
+    "out_of_scope": [
+      "Giữ chỗ và hoàn trả khi tạo, chốt, hủy giao dịch (E-03; E-02 chỉ cung cấp helper)",
+      "Chuyển lot sold sang delivered (E-07)",
+      "Điều chỉnh số lượng giao dịch đã chốt (E-04)",
+      "Tra cứu lịch sử sửa lot (E-09)",
+      "Offline cho chức năng khác F-006 và F-007"
+    ]
+  },
+  "issues": [
+    {
+      "key": "E02-DOC-01",
+      "type": "doc",
+      "parent_of": [
+        "E02-DOC-01a",
+        "E02-DOC-01b"
+      ],
+      "title": "Soạn API Design (BM-2-901-52) cho nhóm API lots",
+      "goal": "Soạn API Design cho 10 API lots làm hợp đồng chung cho FE và BE trước khi code.",
+      "specs": [
+        "api-list §2.3 LOT, §3 LOT_OFFLINE_SYNC",
+        "api-design/_index (L5)",
+        "BM-2-901-52",
+        "PREMISE (mục Thêm: API Design)"
+      ],
+      "dod": [
+        "Hoàn thành khi 2 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E02-DOC-01a",
+      "type": "doc",
+      "title": "API Design: tiếp nhận, đánh giá 目利き và đồng bộ offline (6 API)",
+      "goal": "LOT_CREATE, LOT_JUDGMENT_QUEUE, LOT_GET, LOT_SEARCH, LOT_JUDGMENT_SAVE, LOT_OFFLINE_SYNC.",
+      "specs": [
+        "api-list LOT_CREATE..LOT_JUDGMENT_SAVE, LOT_OFFLINE_SYNC",
+        "LOT_INTAKE_FORM_SPEC",
+        "LOT_JUDGMENT_QUEUE_SPEC",
+        "LOT_JUDGMENT_FORM_SPEC",
+        "LOT_OFFLINE_SYNC_TECH §4.4 #1",
+        "ADR-009"
+      ],
+      "dod": [
+        "Mỗi API một file {API_ID}_API.md theo mẫu BM-2-901-52, có request, response, quyền, mã lỗi, link SPEC và TECH liên quan",
+        "Chốt ưu tiên giữa nhánh SYNC_DUPLICATE của bản sửa trùng giá trị và việc ghi nhật ký: JF §4.2 nói RPC vẫn ghi nhật ký khi kết quả giống hiện tại, còn TECH §4.3 #4 và Q35 trả SYNC_DUPLICATE không ghi (xem chỗ hở)",
+        "Chốt khóa response của SYNC_DUPLICATE và các mã lỗi 409/422 (TECH §4.4 #1 ghi là chốt ở LAB-5), và giá trị schemaVersion khởi đầu (đề xuất 1)",
+        "Chốt chính sách xóa cache danh sách khi tài khoản khác đăng nhập trên thiết bị chung (LOT_JUDGMENT_QUEUE_SPEC OQ-2), bảo đảm không xóa hàng đợi chưa gửi (Q61, ADR-009 R5); và việc không dùng Background Sync theo TECH §5 (OQ-3 của IF vẫn mở)",
+        "Khớp api-list; chỗ lệch ghi vào bảng chỗ hở, không tự sửa api-list"
+      ],
+      "depends": [],
+      "parent": "E02-DOC-01"
+    },
+    {
+      "key": "E02-DOC-01b",
+      "type": "doc",
+      "title": "API Design: công khai, số dư và sửa lot (4 API và hợp đồng 3 helper)",
+      "goal": "LOT_SECTION_LIST, LOT_AVAILABLE_GET, LOT_PUBLISH, LOT_CORRECT, cùng hợp đồng ba helper số dư dùng chung với E-03 và E-04.",
+      "specs": [
+        "api-list LOT_SECTION_LIST..LOT_CORRECT",
+        "LOT_QUANTITY_LIST_SPEC",
+        "LOT_QUANTITY_CONFIRM_SPEC",
+        "LOT_ATTRIBUTE_CORRECTION_SPEC",
+        "LOT_QUANTITY_RESERVATION_TECH §4.4..§4.6",
+        "LOT_DB §6"
+      ],
+      "dod": [
+        "Mỗi API một file {API_ID}_API.md theo mẫu BM-2-901-52, có request, response, quyền, mã lỗi, link SPEC và TECH liên quan",
+        "Hợp đồng ba helper lot_reserve_qty, lot_release_qty, lot_refresh_status: tham số (p_qty dương do RPC gọi tính), giá trị trả (balance_before, balance_after), mã lỗi INSUFFICIENT_QUANTITY với params [lot_code, available_qty]; điều kiện gọi theo loại caller: lot đã khóa FOR UPDATE; luồng tạo giao dịch kiểm lot public trước reserve; reject, cancel, tự từ chối hoàn trades.qty của giao dịch pending đã khóa; điều chỉnh của E-04 (ADJ_ADJUSTMENT_DECIDE_TECH §4.5 #2) gọi với số lượng dương tính từ delta hoặc qty_before của giao dịch confirmed và không kiểm lot public; E-03 và E-04 dùng chung, khớp E02-BE-08",
+        "Ghi lỗ hổng trần số dư khi hoàn trả sau F-009 dương và quyết định ở E02-CLR-02 (xem chỗ hở)",
+        "Chốt nghĩa tham số q của LOT_SECTION_LIST theo từng màn dùng: S-011 chỉ tìm mã lot (A-Z, a-z, 0-9, gạch); S-014 khớp một phần mã lot hoặc tên hàng (chữ Nhật và Việt, không lọc ký tự); S-018 tìm một phần mã lot (api-list ghi q là mã lot, xem chỗ hở của E-03)",
+        "Khớp api-list và TECH; chỗ lệch ghi vào bảng chỗ hở"
+      ],
+      "depends": [],
+      "parent": "E02-DOC-01"
+    },
+    {
+      "key": "E02-DB-01",
+      "type": "db",
+      "special": "số dư chung (BP-b)",
+      "title": "Migration lots: bảng lot, mã lot, số dư và trạng thái",
+      "goal": "Tạo bảng lots với ràng buộc số dư, trạng thái vòng đời và khóa idempotent cho offline.",
+      "specs": [
+        "LOT_DB §2, §4.1, §5",
+        "ADR-009 R2",
+        "FR-LOT-001",
+        "FR-LOT-003"
+      ],
+      "dod": [
+        "Cột theo LOT_DB §4.1; item, receipt_doc_no, created_by giữ nullable cho dữ liệu cũ; khóa ngoại supplier_id và created_by (ON DELETE NO ACTION); không có business_day_id, trigger khóa ngày không áp cho lots",
+        "CHECK available_qty rỗng hoặc (>= 0 và <= initial_qty); initial_qty > 0 (NUMERIC 12,3); adjust_reason <= 500 ký tự; trạng thái chỉ nhận received, inspected, public, sold, delivered, mặc định received",
+        "Duy nhất lot_code và client_id (nhiều dòng client_id rỗng được phép); chỉ mục theo status; sequence lot_code_seq",
+        "RLS bật, chỉ SELECT: ROLE-002, 003, 004, 005 đọc được, ROLE-001 không có quyền đọc lots",
+        "Migration chạy được trên DB trống và DB có dữ liệu seed"
+      ],
+      "depends": [
+        "E10-DB-01",
+        "E10-DB-02",
+        "E01-DB-01",
+        "E01-DB-02"
+      ]
+    },
+    {
+      "key": "E02-DB-02",
+      "type": "db",
+      "special": "offline (F-006/F-007)",
+      "title": "Migration lot_judgments: bảng kết quả 目利き",
+      "goal": "Tạo bảng lot_judgments một dòng cho mỗi lot, có khóa idempotent cho lần nhập đầu.",
+      "specs": [
+        "LOT_DB §2, §4.2, §5",
+        "FR-LOT-002",
+        "ADR-009 R2"
+      ],
+      "dod": [
+        "Cột theo LOT_DB §4.2; ba khóa ngoại lot_id, judged_by, updated_by (ON DELETE NO ACTION); duy nhất lot_id (một kết quả mỗi lot); grade nằm trong 1..3; duy nhất client_id",
+        "judged_at và updated_at lưu mốc thời gian server, giữ micro giây (dùng làm phiên bản cho Q60)",
+        "RLS bật, chỉ SELECT: ROLE-002, 003, 005",
+        "Kiểm thử: ghi trực tiếp bằng client bị từ chối; chèn hai dòng cùng lot_id bị từ chối"
+      ],
+      "depends": [
+        "E02-DB-01",
+        "E01-DB-01"
+      ]
+    },
+    {
+      "key": "E02-BE-01",
+      "type": "be",
+      "special": "offline (F-006/F-007)",
+      "title": "LOT_CREATE: rpc_lot_create (tiếp nhận lot, có idempotent cho offline)",
+      "goal": "ROLE-001 tạo lot trạng thái received; gửi lặp cùng client_id không tạo dòng thứ hai.",
+      "specs": [
+        "FR-LOT-001 AC1..AC3",
+        "FR-LOT-005 AC2",
+        "LOT_INTAKE_FORM_SPEC §4.2, A5..A8",
+        "LOT_OFFLINE_SYNC_TECH §4.3 #1, #2, #5",
+        "ADR-009 R2, R4",
+        "PAU_PARTICIPANT_ELIGIBILITY_TECH §4.1 #3"
+      ],
+      "dod": [
+        "Bắt buộc 5 trường (nguồn, tên hàng <= 100, mặt hàng <= 50, số lượng > 0 tối đa 3 số lẻ và < 1.000.000.000, số chứng từ <= 50); sai thì VALIDATION kèm fields",
+        "Kiểm nguồn bằng check_participant_for_action với lot_supply: sai nhóm trả PARTICIPANT_GROUP_NOT_ALLOWED (kiểm trước), nguồn không hữu hiệu trả PARTICIPANT_INEFFECTIVE",
+        "Khóa participant nguồn FOR SHARE trong cùng giao dịch trước khi kiểm (check_participant_for_action chỉ đọc, không tự khóa), để một lần tạm dừng nguồn đang chạy được tuần tự với việc tạo lot; kiểm thử hai phiên: tạm dừng nguồn đồng thời với tạo lot",
+        "Kiểm trùng client_id ngay sau has_role, trước validation và trước kiểm nguồn: đã có thì trả lot đã có với SYNC_DUPLICATE; hai request song song cùng client_id chỉ tạo một lot (INSERT ... ON CONFLICT)",
+        "lot_code sinh theo ngày JST lúc server nhận (kể cả bản ghi offline đồng bộ ngày sau); received_at là giờ server; giờ thiết bị chỉ ở nhật ký (device_recorded_at); không chống trùng số chứng từ",
+        "Nhật ký lot.create trong cùng giao dịch; chỉ ROLE-001; không kiểm khóa ngày, không phát outbox"
+      ],
+      "depends": [
+        "E02-DB-01",
+        "E02-DOC-01a",
+        "E01-BE-02",
+        "E10-AUD-02"
+      ]
+    },
+    {
+      "key": "E02-BE-02",
+      "type": "be",
+      "special": "offline (F-006/F-007)",
+      "title": "LOT_JUDGMENT_QUEUE: danh sách lot chờ đánh giá và đã đánh giá",
+      "goal": "Hai tab chờ đánh giá và đã đánh giá cho ROLE-002, kèm số đếm cho badge và cho trang chủ.",
+      "specs": [
+        "FR-LOT-002",
+        "LOT_JUDGMENT_QUEUE_SPEC A1, A2",
+        "api-list LOT_JUDGMENT_QUEUE"
+      ],
+      "dod": [
+        "section=pending là lot trạng thái received; section=judged là mọi lot có kết quả, mọi trạng thái; có lọc q (mã lot hoặc tên hàng) và received (all, today, 7d theo ngày JST)",
+        "Thứ tự tab chờ: received_at tăng (cũ nhất trước); tab đã đánh giá: lần đánh giá hoặc sửa mới nhất trước; phân trang cursor",
+        "counts (pending, judged) luôn trả, tính theo q và received",
+        "Mục đã đánh giá trả grade, note, judged_at, judged_by_name, updated_at, updated_by_name; hai mốc thời gian là chuỗi ISO nguyên văn giữ micro giây; tên người lấy qua profiles_brief",
+        "Chỉ ROLE-002 đọc được; role khác bị FORBIDDEN"
+      ],
+      "depends": [
+        "E02-DB-02",
+        "E02-DOC-01a",
+        "E01-BE-01",
+        "E01-DB-01"
+      ]
+    },
+    {
+      "key": "E02-BE-03",
+      "type": "be",
+      "title": "LOT_GET và LOT_SEARCH: đọc chi tiết lot và tìm lot",
+      "goal": "Chi tiết một lot cho ROLE-002 và 005; tìm lot ở mọi trạng thái cho ROLE-005.",
+      "specs": [
+        "FR-LOT-002",
+        "FR-LOT-004",
+        "LOT_ATTRIBUTE_CORRECTION_SPEC D-1, D-2",
+        "api-list LOT_GET, LOT_SEARCH"
+      ],
+      "dod": [
+        "LOT_GET trả lot, nguồn (participants_brief) và kết quả 目利き; judged_at và updated_at là chuỗi ISO nguyên văn giữ micro giây (cho baseUpdatedAt); không có lot thì NOT_FOUND",
+        "LOT_SEARCH: lọc q (mã lot) và status (bỏ trống là tất cả), sắp received_at giảm rồi id giảm, phân trang cursor; tham số sai thì VALIDATION",
+        "LOT_GET cho ROLE-002 và ROLE-005; LOT_SEARCH chỉ ROLE-005 và kiểm aal2 trước role (MFA_REQUIRED trước FORBIDDEN)"
+      ],
+      "depends": [
+        "E02-DB-02",
+        "E02-DOC-01a",
+        "E01-BE-01",
+        "E01-BE-06"
+      ]
+    },
+    {
+      "key": "E02-BE-04",
+      "type": "be",
+      "special": "offline (F-006/F-007)",
+      "parent_of": [
+        "E02-BE-04a",
+        "E02-BE-04b",
+        "E02-BE-04c"
+      ],
+      "title": "LOT_JUDGMENT_SAVE: rpc_judgment_save (ghi, sửa và xử lý xung đột 目利き)",
+      "goal": "Một RPC cho ghi lần đầu và sửa kết quả 目利き, chia 3 sub-issue theo nhánh.",
+      "specs": [
+        "FR-LOT-002 AC1..AC3",
+        "FR-LOT-005 AC2, AC5",
+        "LOT_OFFLINE_SYNC_TECH §4.3",
+        "LOT_DB §6"
+      ],
+      "dod": [
+        "Hoàn thành khi 3 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E02-BE-04a",
+      "type": "be",
+      "special": "offline (F-006/F-007)",
+      "title": "rpc_judgment_save: ghi lần đầu và idempotent",
+      "goal": "Ghi kết quả đầu tiên cho lot received, chuyển lot sang inspected.",
+      "specs": [
+        "FR-LOT-002 AC1, AC2",
+        "LOT_OFFLINE_SYNC_TECH §4.3 #1, #3, #5",
+        "LOT_JUDGMENT_FORM_SPEC §4.2"
+      ],
+      "dod": [
+        "Chỉ ROLE-002; grade nằm trong 1..3 (thiếu thì VALIDATION), note tối đa 500 ký tự, được trim và rỗng thì lưu null (để so sánh trùng sau này ổn định)",
+        "Tra lot theo p_lot hoặc p_lot_client_id; không có lot thì NOT_FOUND (M_COM_007), không ghi, không nhật ký; khóa lots rồi lot_judgments (FOR UPDATE) theo đúng thứ tự",
+        "Chưa có kết quả: ghi với client_id, lot chuyển received sang inspected; lot không ở trạng thái received thì INVALID_STATE (M_LOT_004)",
+        "Kiểm trùng client_id ngay sau has_role, trước validation: đã ghi thì trả SYNC_DUPLICATE",
+        "Nhật ký lot.inspect trước-sau (grade, note, trạng thái lot) kèm device_recorded_at khi đến từ hàng đợi; không kiểm khóa ngày"
+      ],
+      "depends": [
+        "E02-DB-02",
+        "E02-DOC-01a",
+        "E10-AUD-02"
+      ],
+      "parent": "E02-BE-04"
+    },
+    {
+      "key": "E02-BE-04b",
+      "type": "be",
+      "special": "offline (F-006/F-007)",
+      "title": "rpc_judgment_save: nhánh sửa kết quả",
+      "goal": "Sửa kết quả đã có, bắt buộc lý do, ở mọi trạng thái lot.",
+      "specs": [
+        "FR-LOT-002 AC3",
+        "LOT_JUDGMENT_FORM_SPEC A1, A6, A7, §4.2",
+        "LOT_DB §6"
+      ],
+      "dod": [
+        "Có kết quả và có reason thì vào nhánh sửa; reason bắt buộc 1..500 ký tự (thiếu thì VALIDATION, M_LOT_003)",
+        "Sửa được cả khi lot đã vào giao dịch hoặc ngày đã 締め; không đổi trạng thái lot; không kiểm khóa ngày",
+        "FE không chặn nút lưu khi kết quả giống hiện tại; ở RPC, cùng giá trị và cùng người sửa thì đi nhánh SYNC_DUPLICATE của E02-BE-04c (không ghi nhật ký lặp), còn lại ghi updated_by và updated_at là giờ server và nhật ký kèm lý do (xem chỗ hở về audit và Q35)",
+        "Nhật ký lot.inspect trước-sau kèm reason"
+      ],
+      "depends": [
+        "E02-BE-04a"
+      ],
+      "parent": "E02-BE-04"
+    },
+    {
+      "key": "E02-BE-04c",
+      "type": "be",
+      "special": "offline (F-006/F-007)",
+      "title": "rpc_judgment_save: xung đột và gửi lặp bản sửa",
+      "goal": "Không tự ghi đè khi gặp kết quả của người khác; chống trùng bản sửa theo giá trị.",
+      "specs": [
+        "FR-LOT-005 AC5",
+        "LOT_OFFLINE_SYNC_TECH §4.3 (bảng lỗi, #3, #4, #4a)",
+        "Q35, Q60 (đã chốt)",
+        "ADR-009 R6"
+      ],
+      "dod": [
+        "Thứ tự ưu tiên của nhánh sửa: (1) cùng grade và note (đã chuẩn hóa) với cùng người sửa thì SYNC_DUPLICATE; (2) so p_base_updated_at, khác thì SYNC_CONFLICT; (3) ghi bản sửa. Giống hiện tại nhưng người sửa khác thì ghi bản sửa bình thường có nhật ký",
+        "Lần nhập đầu (không có reason) mà lot đã có kết quả của người khác (client_id khác, kể cả rỗng): SYNC_CONFLICT (M_LOT_012), không ghi, không nhật ký",
+        "Bản sửa có p_base_updated_at khác coalesce(updated_at, judged_at) hiện tại: SYNC_CONFLICT (M_LOT_022), không ghi, không nhật ký; so bằng khác nhau, giữ micro giây",
+        "Bản sửa gửi lặp có grade, note giống hiện tại và updated_by là người gọi: trả SYNC_DUPLICATE, chạy trước kiểm base, không ghi nhật ký lặp (Q35)",
+        "Giữ bản của tôi: gửi lại cùng client_id với base mới thì ghi bản sửa; nếu người khác lại sửa thì xung đột lần nữa, không mất dữ liệu",
+        "Kiểm thử bảng ca: ghi đầu gặp bản người khác, sửa gặp bản mới hơn, gửi lặp cùng giá trị, gửi lặp sau timeout của chính mình"
+      ],
+      "depends": [
+        "E02-BE-04b"
+      ],
+      "parent": "E02-BE-04"
+    },
+    {
+      "key": "E02-BE-05",
+      "type": "be",
+      "special": "offline (F-006/F-007)",
+      "title": "LOT_OFFLINE_SYNC: route POST /api/offline-sync",
+      "goal": "Route nhận từng bản ghi từ hàng đợi và chuyển tới đúng RPC online, không có đường ghi riêng cho offline.",
+      "specs": [
+        "FR-LOT-005",
+        "LOT_OFFLINE_SYNC_TECH §4.2..§4.4",
+        "ADR-009 R4",
+        "api-list LOT_OFFLINE_SYNC"
+      ],
+      "dod": [
+        "Chỉ ROLE-001 và ROLE-002 (role khác 403); không có phiên hoặc quá 30 phút thì 401; Content-Type sai thì 415; body sai thì 400",
+        "Kiểm schemaVersion thuộc tập hỗ trợ (hiện hành và bản ngay trước), kind là lot hoặc judgment, clientId là UUID, deviceRecordedAt là ISO 8601; sai thì VALIDATION kèm fields và log sync mức WARN; lỗi payload do RPC kiểm lại như online",
+        "deviceRecordedAt lệch tương lai quá 5 phút (giả định, cấu hình) vẫn nhận, ghi log WARN; thời điểm nghiệp vụ là giờ server",
+        "Chuyển kind=lot tới rpc_lot_create, kind=judgment tới rpc_judgment_save với đúng tham số như online; kiểm kind với role ở RPC",
+        "Response: lot tạo mới 201, judgment ghi 200, SYNC_DUPLICATE 200 kèm bản ghi đã có, lỗi kèm code, params, fields, requestId",
+        "Log category sync mỗi bản ghi một dòng (ok, duplicate, rejected, conflict, failed), không ghi payload",
+        "Lỗi không lường trước (ví dụ vi phạm UQ khác): rollback, 500 INTERNAL_ERROR, log ERROR kèm pgCode; không trả lỗi nghiệp vụ giả"
+      ],
+      "depends": [
+        "E02-BE-01",
+        "E02-BE-04c",
+        "E02-DOC-01a",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01"
+      ]
+    },
+    {
+      "key": "E02-BE-06",
+      "type": "be",
+      "special": "số dư chung (BP-b)",
+      "title": "LOT_SECTION_LIST và LOT_AVAILABLE_GET: đọc lot chờ công khai và số dư",
+      "goal": "Danh sách lot chờ công khai và lot đang công khai cho ROLE-003 và các màn giao dịch; chi tiết một lot kèm số dư.",
+      "specs": [
+        "FR-LOT-003",
+        "LOT_QUANTITY_LIST_SPEC A1, A2",
+        "api-list LOT_SECTION_LIST, LOT_AVAILABLE_GET"
+      ],
+      "dod": [
+        "section=pending_publish là lot inspected; section=public là lot public có available_qty > 0 (lọc ở BE); có lọc q, item, sort (received_asc hoặc received_desc, chỉ pending_publish), phân trang cursor, total khi withCount=true",
+        "Mặc định received_at tăng (cũ nhất trước)",
+        "LOT_AVAILABLE_GET trả số dư, kết quả 目利き (grade, note, judged_at, judged_by_name) và nguồn; không có lot thì NOT_FOUND",
+        "Chỉ ROLE-003 (danh sách còn được màn giao dịch dùng lại); số lượng giữ 3 số lẻ"
+      ],
+      "depends": [
+        "E02-DB-02",
+        "E02-DOC-01b",
+        "E01-BE-01"
+      ]
+    },
+    {
+      "key": "E02-BE-07",
+      "type": "be",
+      "special": "số dư chung (BP-b)",
+      "title": "LOT_PUBLISH: rpc_lot_publish (xác nhận số lượng khả dụng và công khai lot)",
+      "goal": "ROLE-003 đặt số dư ban đầu và chuyển lot inspected sang public, mở cổng giữ chỗ.",
+      "specs": [
+        "FR-LOT-003 AC1, AC2, AC4",
+        "LOT_QUANTITY_RESERVATION_TECH §4.1..§4.3",
+        "LOT_QUANTITY_CONFIRM_SPEC §4.2, A1..A6"
+      ],
+      "dod": [
+        "Route: Content-Type sai thì 415, body không phải object thì 400, lotId không phải số hoặc availableQty rỗng hoặc sai dạng chuỗi số hoặc reason quá 500 ký tự thì 422 kèm fields; availableQty nhận dạng chuỗi, ép sang số ở route (chống sai số dấu phẩy động)",
+        "RPC: has_role ROLE-003 kiểm cả trong RPC (không dựa riêng proxy); không có lot thì NOT_FOUND (M_COM_007); lot không ở trạng thái inspected thì INVALID_STATE (M_LOT_005), không ghi nhật ký; không bao giờ trả INVALID_STATE cho lot không tồn tại",
+        "availableQty > 0, tối đa 3 số lẻ, không vượt initial_qty (vượt thì VALIDATION, M_LOT_015); nhỏ hơn initial_qty thì bắt buộc reason (M_LOT_006)",
+        "Khóa lots FOR UPDATE (khóa đầu tiên, giống mọi RPC giao dịch); đặt available_qty, adjust_reason, chuyển lot sang public; không chặn theo khóa ngày (Q50)",
+        "Nhật ký lot.quantity_confirm trước-sau toàn dòng lots kèm reason, khóa nhật ký lấy cuối; không phát outbox; lỗi bất ngờ sau UPDATE (kể cả vi phạm CHECK) rollback toàn bộ, trả 500 INTERNAL_ERROR (kiểm thử quan sát được dòng lots không đổi)",
+        "Proxy chặn role khác (403) và phiên hết hạn (401)"
+      ],
+      "depends": [
+        "E02-DB-02",
+        "E02-DOC-01b",
+        "E10-AUD-02",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01"
+      ]
+    },
+    {
+      "key": "E02-BE-08",
+      "type": "be",
+      "special": "số dư chung (BP-b)",
+      "title": "Helper số dư: lot_reserve_qty và lot_release_qty",
+      "goal": "Hai hàm dùng chung để giữ chỗ khi tạo giao dịch và hoàn trả khi từ chối, hủy, tự từ chối.",
+      "specs": [
+        "FR-LOT-003 AC3, AC4",
+        "LOT_QUANTITY_RESERVATION_TECH §4.4, §4.5",
+        "LOT_DB §6 (quy ước helper)"
+      ],
+      "dod": [
+        "lot_reserve_qty trừ số dư; thiếu thì INSUFFICIENT_QUANTITY với params [lot_code, available_qty] và không giữ chỗ; số dư không bao giờ âm; chỉ gọi sau khi RPC gọi đã kiểm p_qty hợp lệ và các điều kiện riêng của luồng mình (luồng tạo giao dịch kiểm lot public; luồng điều chỉnh của E-04 không có kiểm này theo DECIDE §4.5 #2); helper không tự kiểm hai điều này",
+        "lot_release_qty cộng lại đúng p_qty do RPC gọi truyền (reject, cancel, tự từ chối: trades.qty của giao dịch pending; điều chỉnh của E-04: số lượng dương do RPC tính cho giao dịch confirmed, LOT_DB §6 và ADJ_ADJUSTMENT_DECIDE_TECH §4.5 #2); helper không tự kiểm trạng thái giao dịch; kết quả không được vượt initial_qty (CHECK); trường hợp F-009 dương đã cộng trước làm hoàn trả vượt trần là chỗ hở chờ quyết định ở E02-CLR-02",
+        "Cả hai trả balance_before và balance_after để RPC gọi đưa vào nhật ký (FR-LOT-003 AC4)",
+        "Security definer, thu quyền thực thi khỏi authenticated; không tự khóa (RPC gọi đã khóa lot FOR UPDATE), không ghi nhật ký",
+        "Kiểm thử đơn vị: đủ số dư, đúng bằng số dư, thiếu 0,001; hoàn trả rồi giữ chỗ lại"
+      ],
+      "depends": [
+        "E02-DB-01",
+        "E02-DOC-01b"
+      ]
+    },
+    {
+      "key": "E02-BE-09",
+      "type": "be",
+      "special": "số dư chung (BP-b)",
+      "title": "Helper trạng thái lot: lot_refresh_status (public, sold)",
+      "goal": "Hàm dùng chung cập nhật trạng thái lot theo số dư và giao dịch đang chờ, gọi ở mọi RPC đổi số dư.",
+      "specs": [
+        "LOT_QUANTITY_RESERVATION_TECH §4.6",
+        "LOT_DB §2, §6",
+        "Q36 (REQ-001 §8, xem chỗ hở)"
+      ],
+      "dod": [
+        "public chuyển sang sold khi available_qty bằng 0 và không còn giao dịch pending của lot",
+        "Theo Q36 đã chốt trong REQ-001 (lot đã bán quay về công khai khi số lượng được hoàn): sold chuyển về public khi số dư lớn hơn 0 sau hoàn; TECH §4.6 #2 và LOT_DB còn ghi 'không có chiều này', cần đồng bộ ở PREMISE (xem chỗ hở)",
+        "Lot delivered không bị hàm này đổi; điều kiện chuyển sold sang delivered thuộc E-07",
+        "Trả trạng thái mới để RPC gọi đưa vào nhật ký (lotStatusBefore, lotStatus); security definer, thu quyền thực thi khỏi authenticated như hai helper còn lại; không tự khóa, không ghi nhật ký",
+        "Kiểm thử bảng ca: số dư 0 còn pending (vẫn public), số dư 0 hết pending (sold), hoàn trả làm số dư > 0 (về public)"
+      ],
+      "depends": [
+        "E02-DB-01",
+        "E02-DOC-01b",
+        "E03-DB-01"
+      ]
+    },
+    {
+      "key": "E02-BE-10",
+      "type": "be",
+      "parent_of": [
+        "E02-BE-10a",
+        "E02-BE-10b"
+      ],
+      "title": "LOT_CORRECT: rpc_lot_correct (sửa thuộc tính và điều chỉnh số dư)",
+      "goal": "ROLE-005 hậu kiểm lot ở mọi trạng thái, chia 2 sub-issue.",
+      "specs": [
+        "FR-LOT-004",
+        "LOT_ATTRIBUTE_CORRECTION_SPEC A1..A6"
+      ],
+      "dod": [
+        "Hoàn thành khi 2 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E02-BE-10a",
+      "type": "be",
+      "title": "rpc_lot_correct: sửa bốn thuộc tính của lot",
+      "goal": "Sửa một trong bốn thuộc tính đăng ký, mỗi lần một thuộc tính.",
+      "specs": [
+        "FR-LOT-004 AC1, AC3, AC4",
+        "LOT_ATTRIBUTE_CORRECTION_SPEC A1, A4..A6, §4.2",
+        "Q76 (đã chốt)"
+      ],
+      "dod": [
+        "Chỉ sửa product_name, item, supplier_id, receipt_doc_no; mỗi lần lưu đúng một thuộc tính; không sửa initial_qty, status, lot_code, kết quả 目利き",
+        "Validation sau trim: tên hàng 1..100, mặt hàng 1..50, số chứng từ 1..50 ký tự (rỗng thì VALIDATION, M_COM_009; quá dài thì M_COM_010); nguồn bắt buộc phải chọn; lý do bắt buộc 1..500 ký tự; sai thì VALIDATION kèm fields, không ghi, không nhật ký",
+        "Cột item và receipt_doc_no giữ nullable ở DB cho dữ liệu cũ; sửa một thuộc tính khác không bị chặn vì cột kia đang rỗng",
+        "Đổi nguồn: khóa lots FOR UPDATE rồi khóa participant nguồn mới FOR SHARE (thứ tự lot trước participant), sau đó check_participant_for_action với lot_supply; sai nhóm PARTICIPANT_GROUP_NOT_ALLOWED, nguồn không hữu hiệu PARTICIPANT_INEFFECTIVE (Q76: chặn)",
+        "Sửa được ở mọi trạng thái lot kể cả sold, delivered; miễn khóa ngày; kiểm aal2 trước role (MFA_REQUIRED trước FORBIDDEN)",
+        "Nhật ký lot.correct trước-sau (cột bị sửa) kèm reason; adjust_reason lưu lý do gần nhất"
+      ],
+      "depends": [
+        "E02-DB-01",
+        "E02-DOC-01b",
+        "E01-BE-02",
+        "E01-BE-06",
+        "E10-AUD-02"
+      ],
+      "parent": "E02-BE-10"
+    },
+    {
+      "key": "E02-BE-10b",
+      "type": "be",
+      "special": "số dư chung (BP-b)",
+      "title": "rpc_lot_correct: điều chỉnh số dư bằng chênh lệch",
+      "goal": "Cộng hoặc trừ số dư khả dụng bằng chênh lệch, không ghi đè tổng.",
+      "specs": [
+        "FR-LOT-004 AC2",
+        "LOT_QUANTITY_RESERVATION_TECH §4.6 (bảng lỗi, #3)",
+        "LOT_ATTRIBUTE_CORRECTION_SPEC A2, A3, §4.2 F-8",
+        "Q71 (đã chốt)"
+      ],
+      "dod": [
+        "Chênh lệch khác 0, tối đa 3 số lẻ, có dấu; chênh lệch bằng 0 thì VALIDATION (M_LOT_018); lot ở trạng thái received hoặc inspected thì INVALID_STATE (M_LOT_008)",
+        "Chỉ khi lot từ public trở đi; kết quả cộng vào available_qty hiện tại (không ghi đè tổng); khóa lots FOR UPDATE cùng thứ tự với RPC giao dịch",
+        "Kết quả âm: INSUFFICIENT_QUANTITY với params [lot_code, available_qty] (M_LOT_007); kết quả vượt initial_qty: VALIDATION (M_LOT_019) trước khi chạm CHECK (Q71: chặn). Cách tính trần khi lot còn giao dịch đang giữ chỗ theo quyết định của E02-CLR-02",
+        "Gọi lot_refresh_status sau khi đổi số dư; nhật ký lot.correct kèm số dư trước-sau và lý do"
+      ],
+      "depends": [
+        "E02-BE-10a",
+        "E02-BE-09",
+        "E02-CLR-02"
+      ],
+      "parent": "E02-BE-10"
+    },
+    {
+      "key": "E02-FE-01",
+      "type": "fe",
+      "special": "offline (F-006/F-007)",
+      "parent_of": [
+        "E02-FE-01a",
+        "E02-FE-01b",
+        "E02-FE-01c",
+        "E02-FE-01d"
+      ],
+      "title": "Hàng đợi offline dùng chung cho S-008 và S-010",
+      "goal": "Lưu thao tác khi mất mạng trên thiết bị, đồng bộ lại FIFO, gắn tài khoản; chia 4 sub-issue.",
+      "specs": [
+        "FR-LOT-005",
+        "LOT_OFFLINE_SYNC_TECH §4.1, §4.5",
+        "ADR-009 R1..R5, R8"
+      ],
+      "dod": [
+        "Hoàn thành khi 4 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E02-FE-01a",
+      "type": "fe",
+      "special": "offline (F-006/F-007)",
+      "title": "Hàng đợi offline: lưu trữ trên thiết bị và cache dữ liệu",
+      "goal": "IndexedDB gắn tài khoản cho hàng đợi và cache dữ liệu cần để dùng khi mất mạng.",
+      "specs": [
+        "LOT_OFFLINE_SYNC_TECH §4.1 #1..#5",
+        "LOT_INTAKE_FORM_SPEC A2, A4, A5",
+        "Q74, Q75"
+      ],
+      "dod": [
+        "Store queue khóa theo clientId, chỉ mục theo [userId, seq]; mỗi bản ghi có clientId UUID v4 sinh lúc bấm Lưu (cả khi online), kind, schemaVersion, deviceRecordedAt, payload, status (queued, conflict, rejected), error, attempts",
+        "Chỉ đọc và gửi bản ghi của tài khoản đang đăng nhập; tài khoản khác trên thiết bị chung không thấy",
+        "Cache SYS_ME, danh sách 卸売業者 (tải hết, limit=100, lặp cursor) và danh sách S-009; lần đầu mở khi mất mạng và chưa có cache thì khóa ô nguồn, hiển thị M_COM_021 (Q74)",
+        "IndexedDB không mở được hoặc đầy: giữ form, hiển thị M_COM_003, không cho lưu offline, không mất dữ liệu đang nhập",
+        "Request trực tuyến gặp lỗi tạm thời (mất mạng, timeout, hoặc 503 SERVICE_UNAVAILABLE với M_COM_002) mà form đã hợp lệ thì cho lưu vào hàng đợi cùng clientId; lỗi nghiệp vụ 4xx và lỗi 500 hoặc mã lạ không đưa vào hàng đợi (hiển thị M_COM_001 kèm requestId, giữ dữ liệu đang nhập); mã tạm TMP- cộng 4 ký tự hex đầu của clientId"
+      ],
+      "depends": [
+        "E10-SYS-01",
+        "E02-DOC-01a",
+        "E01-BE-10",
+        "E02-BE-02"
+      ],
+      "parent": "E02-FE-01"
+    },
+    {
+      "key": "E02-FE-01b",
+      "type": "fe",
+      "special": "offline (F-006/F-007)",
+      "title": "Hàng đợi offline: bộ xả FIFO, xử lý kết quả và xung đột",
+      "goal": "Gửi từng bản ghi theo thứ tự nhập, xử lý từng loại phản hồi, dừng ở xung đột.",
+      "specs": [
+        "LOT_OFFLINE_SYNC_TECH §4.5 #1..#5",
+        "FR-LOT-005 AC2, AC3, AC5",
+        "Q60, Q61 (đã chốt), Q5 (giả định)"
+      ],
+      "dod": [
+        "Một luồng xả mỗi tài khoản (navigator.locks); thứ tự theo seq cục bộ, không theo đồng hồ thiết bị; mỗi trang chỉ xả kind của mình; một request mỗi lần",
+        "Kích hoạt khi mở màn, sự kiện online, chu kỳ thử lại (giả định 15 giây, là cấu hình, Q5) và nút Đồng bộ ngay",
+        "Thành công hoặc SYNC_DUPLICATE: xóa bản ghi, đếm vào M_LOT_010 (M_LOT_011 một lần nếu có trùng); PARTICIPANT_*, VALIDATION, INVALID_STATE, NOT_FOUND: rejected và gửi tiếp",
+        "SYNC_CONFLICT: conflict, dừng hàng judgment, mở hộp thoại; 401: dừng, giữ hàng, về đăng nhập; 403: dừng, giữ hàng, banner M_COM_006 (Q61), không có thao tác xóa vì mất quyền; 500, 503, timeout: dừng lượt hiện tại, giữ queued, tăng attempts, thử lại bản chưa xong ở chu kỳ sau và không gửi bản kế trong lượt đó",
+        "Không bao giờ tự xóa bản ghi chưa được server nhận; chưa dùng Background Sync (giả định, OQ-3)",
+        "Kiểm thử: lỗi tạm thời ở bản đầu thì bản thứ hai chưa được gửi trong lượt đó"
+      ],
+      "depends": [
+        "E02-FE-01a",
+        "E02-BE-05",
+        "E02-CLR-01"
+      ],
+      "parent": "E02-FE-01"
+    },
+    {
+      "key": "E02-FE-01c",
+      "type": "fe",
+      "special": "offline (F-006/F-007)",
+      "title": "Hàng đợi offline: hộp thoại xác nhận khi đăng xuất",
+      "goal": "Cảnh báo trước khi đăng xuất nếu hàng đợi còn bản ghi; dùng chung cho mọi màn.",
+      "specs": [
+        "FR-LOT-005 AC6",
+        "LOT_OFFLINE_SYNC_TECH §4.5 #6",
+        "Q73 (đã chốt), Q89 (mở, giả định)"
+      ],
+      "dod": [
+        "Hàng đợi của tài khoản còn bản ghi queued, rejected hoặc conflict (mọi kind): bấm Đăng xuất hiện hộp thoại M_COM_030 kèm số từng loại",
+        "Hủy: ở lại, không gọi PAU_LOGOUT; Vẫn đăng xuất: gọi PAU_LOGOUT, giữ hàng đợi trên thiết bị, chỉ gửi khi đúng tài khoản đăng nhập lại",
+        "Hàng đợi rỗng thì đăng xuất không hỏi; tự đăng xuất do 30 phút không thao tác hoặc hết phiên 401 không có hộp thoại, hàng đợi vẫn giữ",
+        "Khi mất mạng không gọi được PAU_LOGOUT: chỉ xóa phiên phía thiết bị (giả định cho Q89)"
+      ],
+      "depends": [
+        "E02-FE-01a",
+        "E01-BE-04"
+      ],
+      "parent": "E02-FE-01"
+    },
+    {
+      "key": "E02-FE-01d",
+      "type": "fe",
+      "special": "offline (F-006/F-007)",
+      "title": "Hàng đợi offline: mở màn khi mất mạng (Service Worker, app shell)",
+      "goal": "Cache giao diện để S-008 và S-010 mở được khi mất mạng.",
+      "specs": [
+        "LOT_INTAKE_FORM_SPEC A9",
+        "LOT_JUDGMENT_FORM_SPEC A9",
+        "NFR-AVL-02",
+        "Q5 (mở)"
+      ],
+      "dod": [
+        "Cache app shell của /lots/new và của S-010 cùng dữ liệu cần thiết (SYS_ME, danh sách 卸売業者, cache danh sách S-009)",
+        "Chỉ mở được offline khi thiết bị đã mở màn lúc online dưới đúng tài khoản và bộ đếm 30 phút chưa hết; hết thì về đăng nhập (cần mạng)",
+        "S-010 offline chỉ mở được lot có trong cache của S-009",
+        "Kiểm thử trên danh sách trình duyệt và tablet đã chốt ở E02-CLR-01"
+      ],
+      "depends": [
+        "E02-FE-01a",
+        "E02-CLR-01"
+      ],
+      "parent": "E02-FE-01"
+    },
+    {
+      "key": "E02-FE-02",
+      "type": "fe",
+      "special": "offline (F-006/F-007)",
+      "title": "S-008 LOT_INTAKE_FORM: form tiếp nhận lot",
+      "goal": "Form tiếp nhận lot cho ROLE-001, 5 trạng thái theo spec.",
+      "specs": [
+        "LOT_INTAKE_FORM_SPEC (5 trạng thái: normal, validation-error, offline-queued, sync-conflict, logout-warning)",
+        "FR-LOT-001",
+        "FR-LOT-005"
+      ],
+      "dod": [
+        "Form 5 trường theo bảng validation của spec, kiểm ở client cùng quy tắc server; mọi lỗi hiện inline cùng lúc, focus trường lỗi đầu; dùng được hoàn toàn bằng bàn phím",
+        "Ô nguồn chỉ nhận 卸売業者 hợp lệ trong cache; lot kế tiếp giữ nguyên nguồn vừa chọn",
+        "Lưu thành công: danh sách lot của phiên (G-3) thêm dòng, mã lot thật; mất mạng: lưu vào hàng đợi, hiển thị mã tạm và nhãn chờ đồng bộ, số bản ghi đang chờ",
+        "Lưu gặp 503 hoặc mất mạng: hiển thị M_COM_002 hoặc nhãn chờ đồng bộ và lưu hàng đợi cùng clientId (dữ liệu không mất)",
+        "Bản ghi bị từ chối (nguồn hết hiệu lực): hiển thị lý do, cho sửa nguồn rồi gửi lại cùng clientId (trạng thái sync-conflict)",
+        "Bản ghi rejected: bấm Bỏ bản ghi thì hộp thoại M_COM_020, đồng ý thì xóa cục bộ, không gọi API; lỗi validation không sửa được nguồn thì chỉ còn đường nhập lại tay",
+        "Hộp thoại đăng xuất khi còn hàng đợi dùng thành phần chung E02-FE-01c (trạng thái logout-warning); ROLE-001 không đọc lại lot đã tạo, tải lại trang mất dòng Đã đồng bộ"
+      ],
+      "depends": [
+        "E02-BE-01",
+        "E02-BE-05",
+        "E01-BE-10",
+        "E02-FE-01a",
+        "E02-FE-01b",
+        "E02-FE-01c",
+        "E02-FE-01d"
+      ]
+    },
+    {
+      "key": "E02-FE-03",
+      "type": "fe",
+      "special": "offline (F-006/F-007)",
+      "title": "S-009 LOT_JUDGMENT_QUEUE: danh sách lot chờ đánh giá",
+      "goal": "Hai tab chờ đánh giá và đã đánh giá cho ROLE-002, 4 trạng thái theo spec.",
+      "specs": [
+        "LOT_JUDGMENT_QUEUE_SPEC (4 trạng thái: normal, judged, empty, offline)",
+        "FR-LOT-002",
+        "FR-LOT-005"
+      ],
+      "dod": [
+        "Hai tab theo định nghĩa của spec; badge số đếm lấy từ counts; lọc q và received; không tự làm mới (người dùng bấm làm mới)",
+        "Ô tìm (q): trim, bỏ ký tự điều khiển, tối đa 100 ký tự (quá thì cắt ở client, không báo lỗi); giá trị lạ trên URL cho received về all và cho tab về pending",
+        "Mất mạng (trạng thái offline): banner, hiển thị bản cache (snapshot) của lần tải gần nhất, tìm và lọc bị vô hiệu (không tự lọc trên cache), vẫn mở được S-010; lot tạo offline chưa đồng bộ không có trong danh sách (Q48)",
+        "Lot đã có bản ghi 目利き chưa đồng bộ của tài khoản thì nút ghi và sửa bị vô hiệu",
+        "Trạng thái empty khi không có lot chờ; ngày giờ hiển thị DD/MM/YYYY HH:mm giờ JST"
+      ],
+      "depends": [
+        "E02-BE-02",
+        "E02-FE-01a",
+        "E10-SYS-01"
+      ]
+    },
+    {
+      "key": "E02-FE-04",
+      "type": "fe",
+      "special": "offline (F-006/F-007)",
+      "parent_of": [
+        "E02-FE-04a",
+        "E02-FE-04b",
+        "E02-FE-04c"
+      ],
+      "title": "S-010 LOT_JUDGMENT_FORM: ghi và sửa kết quả 目利き",
+      "goal": "Màn ghi lần đầu hoặc sửa kết quả, 7 trạng thái theo spec, chia 3 sub-issue.",
+      "specs": [
+        "LOT_JUDGMENT_FORM_SPEC (7 trạng thái: normal, validation-error, edit, offline-queued, sync-conflict, sync-conflict-edit, logout-warning)",
+        "FR-LOT-002",
+        "FR-LOT-005"
+      ],
+      "dod": [
+        "Hoàn thành khi 3 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E02-FE-04a",
+      "type": "fe",
+      "title": "S-010a: form ghi lần đầu và sửa khi trực tuyến",
+      "goal": "Chế độ do dữ liệu quyết định: có kết quả thì sửa, chưa có thì ghi lần đầu.",
+      "specs": [
+        "LOT_JUDGMENT_FORM_SPEC A1, A7, §4.2 (trạng thái normal, validation-error, edit)",
+        "FR-LOT-002 AC1..AC3"
+      ],
+      "dod": [
+        "Phân loại Loại 1..3 bắt buộc (thiếu thì M_LOT_002), ghi chú tối đa 500 ký tự; chế độ sửa thêm lý do bắt buộc 1..500 (thiếu thì M_LOT_003); lý do chỉ gửi ở chế độ sửa",
+        "Sửa được ở mọi trạng thái lot; FE không chặn nút lưu khi kết quả giống hiện tại (RPC có thể trả SYNC_DUPLICATE, xem E02-BE-04c); hiển thị tên người đánh giá và người sửa, không lộ id",
+        "Ý nghĩa Loại 1/2/3 chỉ ghi lựa chọn, không gắn quy tắc (Q49); ROLE-002 không thấy nhật ký sửa",
+        "SYNC_CONFLICT khi ghi lần đầu trực tuyến: gọi lại LOT_GET, chuyển sang chế độ sửa, giữ nguyên grade và note người nhập, focus ô lý do, banner M_LOT_020 kèm mã lot; yêu cầu lý do trước lần gửi tiếp (không dùng hộp thoại offline của E02-FE-04c)"
+      ],
+      "depends": [
+        "E02-BE-03",
+        "E02-BE-04a",
+        "E02-BE-04b"
+      ],
+      "parent": "E02-FE-04",
+      "special": "offline (F-006/F-007)"
+    },
+    {
+      "key": "E02-FE-04b",
+      "type": "fe",
+      "special": "offline (F-006/F-007)",
+      "title": "S-010b: lưu vào hàng đợi khi mất mạng và bản ghi bị từ chối",
+      "goal": "Lưu kết quả vào hàng đợi, hiển thị trạng thái chờ đồng bộ.",
+      "specs": [
+        "LOT_JUDGMENT_FORM_SPEC A2, A3, A5 (trạng thái offline-queued)",
+        "FR-LOT-005 AC1, AC3"
+      ],
+      "dod": [
+        "Mất mạng: lưu vào hàng đợi, hiển thị số bản ghi đang chờ và nhãn chờ đồng bộ; lot đã có bản ghi chờ của tài khoản thì form chỉ đọc",
+        "Lưu gặp 503 hoặc mất mạng: hiển thị M_COM_002 hoặc nhãn chờ đồng bộ và lưu hàng đợi cùng clientId; bản ghi rejected bấm dòng lỗi thì hộp thoại M_COM_020, đồng ý thì xóa cục bộ, không gọi API",
+        "Bản sửa offline mang baseUpdatedAt là chuỗi ISO nguyên văn của updated_at hoặc judged_at lúc mở form, không qua Date để khỏi mất micro giây",
+        "Đồng bộ chạy khi S-010 đang mở; bản ghi bị từ chối (rejected) hiển thị lý do để xử lý tay",
+        "Mở màn khi offline chỉ với lot có trong cache của S-009",
+        "Trạng thái logout-warning dùng thành phần chung E02-FE-01c, kiểm tích hợp ở màn này"
+      ],
+      "depends": [
+        "E02-FE-04a",
+        "E02-FE-01a",
+        "E02-FE-01b",
+        "E02-BE-05",
+        "E02-FE-01c",
+        "E02-FE-01d"
+      ],
+      "parent": "E02-FE-04"
+    },
+    {
+      "key": "E02-FE-04c",
+      "type": "fe",
+      "special": "offline (F-006/F-007)",
+      "title": "S-010c: xung đột đồng bộ (lần nhập đầu và bản sửa)",
+      "goal": "Hộp thoại xung đột để người nhập chọn giữ hoặc bỏ bản của mình.",
+      "specs": [
+        "LOT_JUDGMENT_FORM_SPEC A3, A4 (trạng thái sync-conflict, sync-conflict-edit, hộp thoại I và J)",
+        "FR-LOT-005 AC5",
+        "Q60 (đã chốt)"
+      ],
+      "dod": [
+        "Gặp SYNC_CONFLICT: bản ghi chuyển conflict, dừng hàng judgment, gọi LOT_GET lấy bản hiện tại của server, hiển thị cạnh bản của mình",
+        "Giữ bản của tôi: gửi lại cùng clientId với baseUpdatedAt mới; lần nhập đầu thì yêu cầu nhập lý do (M_LOT_012); bản sửa giữ lý do cũ",
+        "Bỏ bản của tôi: xóa cục bộ, không gọi API, server giữ nguyên",
+        "Nhận 401 hoặc 403 khi đang xử lý: bản ghi vẫn conflict, hàng đợi giữ; biến thể M_LOT_022 cho bản sửa gặp bản mới hơn"
+      ],
+      "depends": [
+        "E02-FE-04b",
+        "E02-BE-04c",
+        "E02-BE-03"
+      ],
+      "parent": "E02-FE-04"
+    },
+    {
+      "key": "E02-FE-05",
+      "type": "fe",
+      "special": "số dư chung (BP-b)",
+      "title": "S-011 LOT_QUANTITY_LIST: lot chờ xác nhận số lượng",
+      "goal": "Danh sách lot đã 目利き chờ công khai cho ROLE-003, 3 trạng thái theo spec.",
+      "specs": [
+        "LOT_QUANTITY_LIST_SPEC (3 trạng thái: normal, empty, offline)",
+        "FR-LOT-003"
+      ],
+      "dod": [
+        "Danh sách lot inspected theo received_at tăng, đổi được sang giảm dần (sort chỉ nhận received_asc, received_desc); ô tìm q tối đa 30 ký tự, trim, chỉ giữ A-Z a-z 0-9 và dấu gạch (ký tự khác bỏ khi gõ, không báo lỗi); không có bộ lọc mặt hàng và không tìm theo tên hàng hoặc nguồn",
+        "Bắt buộc online: không cache, không hàng đợi; mất mạng sau khi đã tải thì giữ dữ liệu đang hiển thị và khóa mọi thao tác (trạng thái offline)",
+        "Trạng thái empty khi không có lot chờ; số lượng hiển thị theo kg 3 số lẻ; màn không có trạng thái ngày đã khóa (Q50)"
+      ],
+      "depends": [
+        "E02-BE-06"
+      ]
+    },
+    {
+      "key": "E02-FE-06",
+      "type": "fe",
+      "special": "số dư chung (BP-b)",
+      "title": "S-012 LOT_QUANTITY_CONFIRM: xác nhận số lượng khả dụng và công khai",
+      "goal": "Hai bước nhập số lượng rồi xem lại và công khai, 5 trạng thái theo spec.",
+      "specs": [
+        "LOT_QUANTITY_CONFIRM_SPEC (5 trạng thái: normal, error, review, stale, offline)",
+        "FR-LOT-003 AC1, AC2"
+      ],
+      "dod": [
+        "Bước 1 nhập số lượng khả dụng (gửi dạng chuỗi, mặc định bằng số đăng ký, > 0, tối đa 3 số lẻ, không vượt số đăng ký) và lý do (trim, tối đa 500 ký tự; bắt buộc khi nhỏ hơn số đăng ký, M_LOT_006)",
+        "Bước 2 (review) xem lại rồi công khai; không cho tăng quá số đăng ký (M_LOT_015)",
+        "Lot vừa được người khác công khai (INVALID_STATE): hiển thị trạng thái stale với M_LOT_005",
+        "Bắt buộc online: mất mạng thì khóa nút và hiển thị M_COM_003; thành công hiển thị M_LOT_017 ở S-011"
+      ],
+      "depends": [
+        "E02-BE-06",
+        "E02-BE-07"
+      ]
+    },
+    {
+      "key": "E02-FE-07",
+      "type": "fe",
+      "special": "số dư chung (BP-b)",
+      "title": "S-013 LOT_ATTRIBUTE_CORRECTION: sửa lỗi thuộc tính lot",
+      "goal": "Màn hậu kiểm của ROLE-005: tìm lot và sửa trong modal có hai tab, 4 trạng thái theo spec.",
+      "specs": [
+        "LOT_ATTRIBUTE_CORRECTION_SPEC (4 trạng thái: normal, qty-day-locked, qty-not-public, empty)",
+        "FR-LOT-004"
+      ],
+      "dod": [
+        "Tìm lot theo mã (q tối đa 30 ký tự, trim, chỉ giữ A-Z, a-z, 0-9, dấu gạch; ký tự khác bỏ khi gõ) và lọc trạng thái; empty khi không tìm thấy",
+        "Tab Thuộc tính: một thuộc tính mỗi lần lưu (tên hàng, mặt hàng, nguồn, số chứng từ), lý do bắt buộc; nút lưu bị vô hiệu khi giá trị mới giống hiện tại; ô nguồn chỉ chọn 卸売業者 hợp lệ",
+        "Tab Số lượng nhập chênh lệch có dấu; lot chưa công khai thì khóa tab (qty-not-public, M_LOT_008); lỗi số dư âm hiển thị M_LOT_007, vượt số đăng ký hiển thị M_LOT_019",
+        "Trạng thái qty-day-locked: banner thông tin về ngày hiện tại đã 締め nhưng vẫn sửa được (miễn khóa ngày); ROLE-005 cần aal2",
+        "Không sửa được initial_qty, trạng thái, mã lot, kết quả 目利き ở màn này",
+        "Bắt buộc online: mất mạng hoặc quá thời gian chờ thì banner M_COM_003, giữ modal, không có đường lưu offline và không đưa vào hàng đợi"
+      ],
+      "depends": [
+        "E02-BE-03",
+        "E02-BE-10a",
+        "E02-BE-10b",
+        "E01-BE-10"
+      ]
+    },
+    {
+      "key": "E02-QA-01",
+      "type": "qa",
+      "title": "QA đầu cuối: vòng đời lot trực tuyến (tiếp nhận, 目利き, công khai, sửa)",
+      "goal": "Kiểm thử luồng received, inspected, public và hậu kiểm từ trình duyệt thật.",
+      "specs": [
+        "FR-LOT-001..004",
+        "LOT_DB §2"
+      ],
+      "dod": [
+        "Kịch bản: ROLE-001 tạo lot, ROLE-002 đánh giá và sửa, ROLE-003 công khai, ROLE-005 sửa thuộc tính và số dư",
+        "Các ca lỗi: thiếu trường, số lượng <= 0, nguồn sai nhóm hoặc không hữu hiệu, công khai vượt số đăng ký, giảm thiếu lý do, hai ROLE-003 cùng công khai (người sau nhận M_LOT_005)",
+        "Ca hai phiên: tạm dừng nguồn đồng thời với tạo lot thì không lọt lot cho nguồn đã tạm dừng",
+        "Mỗi ca ghi đầu vào, kết quả mong đợi và tiêu chí đạt; có báo cáo kết quả và lỗi tìm được"
+      ],
+      "depends": [
+        "E02-FE-02",
+        "E02-FE-03",
+        "E02-FE-04",
+        "E02-FE-05",
+        "E02-FE-06",
+        "E02-FE-07",
+        "E01-BE-14"
+      ]
+    },
+    {
+      "key": "E02-QA-02",
+      "type": "qa",
+      "special": "offline (F-006/F-007)",
+      "title": "QA đầu cuối: nhập tạm offline và đồng bộ lại",
+      "goal": "Kiểm thử hàng đợi offline với mất mạng thật, trùng, từ chối, xung đột và đăng xuất.",
+      "specs": [
+        "FR-LOT-005",
+        "LOT_OFFLINE_SYNC_TECH",
+        "ADR-009"
+      ],
+      "dod": [
+        "Kịch bản: tạo lot và 目利き khi mất mạng, có mạng lại tự đồng bộ theo thứ tự; gửi lặp cùng clientId không tạo bản thứ hai",
+        "Ca từ chối: nguồn hết hiệu lực khi đồng bộ; ca xung đột: lần nhập đầu gặp kết quả của người khác, bản sửa gặp bản mới hơn; chọn giữ và chọn bỏ",
+        "Ca lỗi tạm thời: 503 khi lưu thì vào hàng đợi; lỗi tạm thời ở bản đầu thì bản thứ hai chưa gửi trong lượt đó; bản ghi rejected bỏ được qua hộp thoại M_COM_020 mà không gọi API",
+        "Ca đăng xuất: hộp thoại M_COM_030 và hàng đợi giữ; tài khoản khác trên cùng thiết bị không thấy hàng đợi; giao dịch và chốt sổ khóa khi mất mạng",
+        "Chạy trên các trình duyệt và tablet đã chốt ở E02-CLR-01; mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt"
+      ],
+      "depends": [
+        "E02-FE-01",
+        "E02-FE-02",
+        "E02-FE-04",
+        "E02-BE-05"
+      ]
+    },
+    {
+      "key": "E02-QA-03",
+      "type": "qa",
+      "special": "số dư chung (BP-b)",
+      "title": "QA: bất biến số dư và ca hai phiên (công khai, giữ chỗ, sửa số dư)",
+      "goal": "Kiểm thử bất biến số dư và đua giữa RPC lot với RPC giao dịch trên PostgreSQL.",
+      "specs": [
+        "LOT_QUANTITY_RESERVATION_TECH §4.6 #4",
+        "REQ-001 §8.1 #2",
+        "ADR-013 R5"
+      ],
+      "dod": [
+        "Bất biến: available_qty bằng số công khai trừ tổng pending trừ tổng qty hiệu lực đã chốt cộng tổng chênh lệch F-009; số dư không bao giờ âm",
+        "Ca hai phiên: lot số dư 10, hai giao dịch giữ chỗ 6 mỗi giao dịch cùng lúc thì đúng một thành công, ca kia INSUFFICIENT_QUANTITY",
+        "Ca hai phiên: sửa số dư F-009 cùng lúc với giữ chỗ nối đuôi nhau, không âm; thứ tự khóa lot trước, participant, giao dịch",
+        "Ca trạng thái public sang sold: số dư về 0 và hết pending thì sold; ca sold về public (Q36): dựng bằng lot sold (số dư 0, không còn pending) rồi F-009 cộng dương, kỳ vọng lot về public; dùng điều chỉnh hoặc 逆仕訳 qua E-04 khi có luồng tương ứng",
+        "Ca trần số dư (chờ E02-CLR-02): initial 100, công khai 100, giữ chỗ 50, F-009 cộng 50, hoàn 50; kết quả mong đợi theo quyết định của E02-CLR-02, không được phép vỡ CHECK thành 500",
+        "Mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả"
+      ],
+      "depends": [
+        "E02-BE-08",
+        "E02-BE-09",
+        "E02-BE-10b",
+        "E02-BE-07",
+        "E03-BE-02",
+        "E02-CLR-02"
+      ]
+    },
+    {
+      "key": "E02-CLR-01",
+      "type": "clarify",
+      "special": "offline (F-006/F-007)",
+      "title": "Làm rõ: trình duyệt, tablet hỗ trợ và thời gian mất kết nối cho chế độ offline (Q5, NFR-COMP-01)",
+      "goal": "Chốt danh sách trình duyệt, tablet và thời gian mất mạng phải chịu, vì thiết kế offline dựa vào IndexedDB, Service Worker và navigator.locks.",
+      "specs": [
+        "REQ-001 §8 Q5",
+        "NFR-AVL-02",
+        "NFR-COMP-01",
+        "LOT_OFFLINE_SYNC_TECH §4.5"
+      ],
+      "dod": [
+        "Có danh sách trình duyệt và tablet cần hỗ trợ được khách (hoặc người có thẩm quyền) chấp nhận",
+        "Có thời gian mất kết nối phải chịu và chu kỳ thử lại (giả định hiện tại 15 giây); ghi vào PREMISE",
+        "Nếu danh sách có trình duyệt thiếu navigator.locks hoặc Service Worker thì báo lại E02-FE-01b, E02-FE-01d để đổi thiết kế"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E02-CLR-02",
+      "type": "clarify",
+      "special": "số dư chung (BP-b)",
+      "title": "Làm rõ: trần số dư khi F-009 dương trong lúc lot còn giao dịch giữ chỗ (Q71)",
+      "goal": "Chốt cách bảo đảm available_qty không vượt initial_qty khi hoàn trả giao dịch sau một lần F-009 cộng chênh lệch dương.",
+      "specs": [
+        "LOT_QUANTITY_RESERVATION_TECH §4.5, §4.6",
+        "LOT_ATTRIBUTE_CORRECTION_SPEC A2, A3",
+        "REQ-001 §8 Q71",
+        "LOT_DB §4.1 (CHECK available_qty)"
+      ],
+      "dod": [
+        "Có quyết định được người có thẩm quyền chấp nhận về trần khi F-009 dương cùng lúc còn giao dịch pending hoặc đã chốt (ví dụ initial 100, giữ chỗ 50, F-009 cộng 50, rồi hoàn 50 làm số dư 150 vượt CHECK)",
+        "Quyết định được ghi vào PREMISE và hợp đồng helper ở E02-DOC-01b; không tự bỏ CHECK, không tự cắt số hoàn, không tự sửa initial_qty khi chưa có quyết định",
+        "Báo lại E02-BE-10b, E02-BE-08 và E02-QA-03 để cập nhật DoD và ca kiểm"
+      ],
+      "depends": []
+    }
+  ]
+}

@@ -1,0 +1,968 @@
+{
+  "epic": {
+    "key": "E-06",
+    "title": "E-06 Tiền thưởng thanh toán đúng hạn và phiên bản 業務規程 (incentive)",
+    "goal": "Tự tính 完納奨励金 khi khóa ngày theo tỷ lệ có phiên bản, quản lý phiên bản tỷ lệ và 業務規程 chung một vòng đời hai người duyệt (tối đa 4 lần mỗi năm), và sinh delta thưởng khi điều chỉnh sau khóa.",
+    "specs": [
+      "FR-INC-001..003",
+      "design/incentive",
+      "INC_DB",
+      "ADR-003",
+      "ADR-006"
+    ],
+    "out_of_scope": [
+      "Bảng rule_versions, rule_versions_guard, chỉ mục duy nhất, active_rule_version() (E-10, CORE_DB)",
+      "Chốt sổ phát sự kiện business_day_locked (E-05)",
+      "Duyệt điều chỉnh, bút toán, view giá trị hiệu lực (E-04); E-06 chỉ cung cấp logic nhánh delta",
+      "Xác định 完納 và deliveries.completed_at (E-07)",
+      "Báo cáo ngày, RPT-12, tra lịch sử tỷ lệ theo giao dịch (E-09)",
+      "Dùng tham số 業務規程 trong nghiệp vụ khác (E-01, E-03, E-05)"
+    ]
+  },
+  "issues": [
+    {
+      "key": "E06-DOC-01",
+      "type": "doc",
+      "parent_of": [
+        "E06-DOC-01a",
+        "E06-DOC-01b"
+      ],
+      "title": "Soạn API Design (BM-2-901-52) cho nhóm API incentive",
+      "goal": "Soạn API Design cho 9 API và 2 job của tính thưởng và phiên bản 業務規程, chia 2 sub-issue.",
+      "specs": [
+        "api-list §2.7 INC và §3 job",
+        "api-design/_index (L5)",
+        "BM-2-901-52",
+        "PREMISE (mục Thêm: API Design)"
+      ],
+      "dod": [
+        "Hoàn thành khi 2 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E06-DOC-01a",
+      "type": "doc",
+      "title": "API Design: kết quả tính, chạy lại, delta và hợp đồng job (3 API, 1 job)",
+      "goal": "INC_RESULT_LIST, INC_RESULT_RERUN, INC_DELTA_LIST, INC_JOB_CALCULATE và hợp đồng nhánh delta gọi từ rpc_adjustment_decide.",
+      "specs": [
+        "api-list INC_RESULT_LIST, INC_RESULT_RERUN, INC_DELTA_LIST, INC_JOB_CALCULATE",
+        "INC_INCENTIVE_CALCULATE_TECH §4.1..§4.7",
+        "INC_POST_LOCK_DELTA_TECH §4.1..§4.5",
+        "INC_CALCULATION_RESULT_SPEC §4.3",
+        "INC_POST_LOCK_DELTA_SPEC §4.3",
+        "Q25, Q33, Q46, Q56, Q81, Q82 (đã chốt)"
+      ],
+      "dod": [
+        "Mỗi API một file {API_ID}_API.md theo mẫu BM-2-901-52: request, response, quyền (ROLE-005 aal2), mã lỗi, link SPEC và TECH",
+        "Chốt khóa response (đề xuất của SPEC, DQ-4): INC_RESULT_LIST (day, lock, calc_status, run, computed_at, summary, items[], next_cursor), INC_RESULT_RERUN (ok, lock_id, status, rows_written, rows_skipped), INC_DELTA_LIST (day, summary, items[] kèm incentive.status và rule_version)",
+        "Chốt hợp đồng kết quả nhánh delta mà E04-BE-03d nhận: bốn trạng thái computed, not_timely, rate_missing, deferred cộng none; khóa response duyệt và audit adjustment.approve với phần thưởng khớp E04-DOC-01b (INC_POST_LOCK_DELTA_TECH §4.5 và ADJ_ADJUSTMENT_DECIDE_TECH §4.5 ghi khác nhau, xem chỗ hở của E-04)",
+        "Chốt hợp đồng payload sự kiện business_day_locked mà job nhận ({business_day_id, business_date, lock_id, lock_no}, khớp E05-DOC-01a) và thứ tự tuần tự job thưởng rồi worker báo cáo (G19)",
+        "Chốt tên action audit incentive.calculate, incentive.calculate_skipped, incentive.rerun; mã nội bộ RATE_VERSION_NOT_FOUND (error-codes #42) không phải mã HTTP",
+        "Chốt một điều kiện dòng treo (stale) dùng chung cho INC_RESULT_LIST, INC_RESULT_RERUN và giám sát: running quá 5 phút (Q82) và outbox của lần khóa không còn retry_wait (CALC §4.1 bước 2b); S-028 §6 A2 còn ngưỡng cũ 15 phút và chỉ nêu tuổi, INC_DB §4.2 chỉ nêu tuổi (ghi vào chỗ hở)",
+        "Chốt trạng thái nhánh delta cho giao dịch xác nhận sau lần khóa gần nhất (INC_POST_LOCK_DELTA_TECH §4.3: bảng Error có điều kiện confirmed_at không muộn hơn locked_at, bước Detail không có)",
+        "Chốt INC_DELTA_LIST với tham số dayId: api-list ghi query dayId, limit, cursor còn S-031 không nhận ngày; chốt API bỏ qua hay từ chối dayId, màn không gửi dayId (không thêm bộ chọn ngày vào S-031)",
+        "Chốt nội dung lời nhắc sinh lại báo cáo ngày bằng tay sau khi chạy lại thành công (Q81, hiện chưa có mã message), để E06-FE-01c hiển thị"
+      ],
+      "depends": [],
+      "parent": "E06-DOC-01"
+    },
+    {
+      "key": "E06-DOC-01b",
+      "type": "doc",
+      "title": "API Design: phiên bản 業務規程 và tỷ lệ (6 API, 1 job)",
+      "goal": "INC_RULE_VERSION_LIST, GET, CREATE, APPROVE, REJECT, CANCEL và INC_JOB_RULE_ACTIVATE.",
+      "specs": [
+        "api-list INC_RULE_VERSION_*, INC_JOB_RULE_ACTIVATE",
+        "INC_RULE_VERSIONING_TECH §4.1..§4.7, §5",
+        "INC_RATE_VERSION_LIST_SPEC §4.3",
+        "INC_RATE_VERSION_DETAIL_SPEC §4.3",
+        "ADR-003",
+        "Q15, Q25, Q51, Q58, Q59 (đã chốt), Q30 (xem E06-CLR-02)"
+      ],
+      "dod": [
+        "Mỗi API một file {API_ID}_API.md: request (kind, effectiveFrom ISO, incentiveRate chuỗi phần trăm hoặc params, reason, rollbackOfId; approve không body; reject và cancel có reason), response, quyền (ROLE-006 cho POST, ROLE-005 và ROLE-006 cho GET), mã lỗi",
+        "Chốt khóa response của INC_RULE_VERSION_LIST theo ba chế độ (tóm tắt có counts, limit_usage, active; group=timeline; group=off_axis) và của INC_RULE_VERSION_GET (kèm limit_usage.approvals[], current_active, rollback_of)",
+        "Chốt danh mục khóa params của market_rule và kiểu (conditional_release_conditions, market_holidays, reopen_window_days, default_participation_limit_jpy), danh sách khóa bắt buộc và việc market_rule có được gửi params rỗng không (S-030 OQ-3); chờ E06-CLR-02 về việc tách tham số vận hành khỏi hạn mức",
+        "Chốt lịch dự phòng của job kích hoạt khi lần chạy 00:05 JST lỗi (INC_RULE_VERSIONING_TECH Q-RUL-T2, còn mở) và hợp đồng sự kiện rule_version_activated (chỉ incentive_rate, dedup rule_version_activated:{id}, max_attempts 3)",
+        "Chốt chuẩn hóa mã lỗi: SELF_APPROVAL_FORBIDDEN, RULE_CHANGE_LIMIT_REACHED, CONFLICT, VALIDATION kèm fields, INVALID_STATE kèm params [trạng thái, hành động]",
+        "Ghi cả hai nguồn về đua duyệt và hủy: INC_RULE_VERSIONING_TECH bảng đồng thời ghi bên sau INVALID_STATE, nhưng bảng lỗi §4.5 cho hủy bản scheduled có ngày hiệu lực tương lai nên duyệt xong rồi hủy là hợp lệ; chốt ma trận theo thứ tự thao tác",
+        "Chốt cách xử lý CONFLICT do chỉ mục duy nhất với params rỗng (RULE §4.4: precheck có params [version_code, effective_from], lưới UQ không có): cách lấy thông tin bản xung đột hoặc message thay thế",
+        "Chốt cách nhập và hiển thị default_participation_limit_jpy là null (không có mặc định, khác 0): S-030 H-5 chỉ mô tả số nguyên không âm; không đổi null thành 0"
+      ],
+      "depends": [
+        "E06-CLR-02"
+      ],
+      "parent": "E06-DOC-01"
+    },
+    {
+      "key": "E06-DB-01",
+      "type": "db",
+      "special": "完納奨励金 (tỷ lệ có phiên bản)",
+      "title": "Migration incentive_results: bảng kết quả thưởng, chỉ thêm",
+      "goal": "Bảng kết quả 完納奨励金: dòng original khi khóa ngày và dòng delta cho bút toán điều chỉnh.",
+      "specs": [
+        "INC_DB §4.1, RLS, Trigger",
+        "FR-INC-001 AC5",
+        "FR-INC-003 AC2",
+        "ADR-003 R8",
+        "ADR-006 R6",
+        "Q14, Q25, Q33, Q56 (đã chốt)"
+      ],
+      "dod": [
+        "Cột theo INC_DB §4.1: trade_id, kind (chỉ original hoặc delta), adjustment_entry_id, business_day_id, lock_id (rỗng với delta), rule_version_id, base_amount NUMERIC(18,3) (không làm tròn ở DB, delta có thể âm), is_timely, incentive_jpy BIGINT, computed_at (mặc định now(), chỉ để hiển thị)",
+        "CHECK (kind là delta) bằng (adjustment_entry_id có giá trị); chỉ mục duy nhất một phần theo trade_id khi kind là original (tối đa một original mỗi giao dịch, theo Q14 mặc định sinh delta); chỉ mục duy nhất theo adjustment_entry_id (một bút toán tối đa một delta); chỉ mục theo (business_day_id, kind) và theo rule_version_id",
+        "Năm khóa ngoại (trades, trade_adjustment_entries, business_days, business_day_locks, rule_versions); không cho xóa phiên bản đã dùng (NO ACTION); rule_version_id phải là bản kind incentive_rate",
+        "Trigger deny_update_delete() chặn UPDATE và DELETE mọi role; thu quyền update, delete, truncate khỏi service_role; không có trigger khóa ngày (original được ghi sau khi ngày đã khóa)",
+        "RLS bật, chỉ SELECT cho ROLE-005 và ROLE-006 (ROLE-006 để tra tỷ lệ đã dùng, F-039); không có RPC ghi cho người dùng, hàm ghi thu quyền thực thi khỏi authenticated",
+        "Hàm tra phiên bản theo ngày nghiệp vụ của bản ghi (không theo giờ chạy, BP-e) thuộc E10-CORE-DB; kiểm FK lấy FOR KEY SHARE trên trades để tương thích với FOR NO KEY UPDATE của rpc_adjustment_decide (INC_DB, H1)"
+      ],
+      "depends": [
+        "E03-DB-01",
+        "E04-DB-02",
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05"
+      ]
+    },
+    {
+      "key": "E06-DB-02",
+      "type": "db",
+      "special": "完納奨励金 (tỷ lệ có phiên bản)",
+      "title": "Migration incentive_runs: trạng thái chạy job thưởng theo lần khóa",
+      "goal": "Một dòng mỗi lần khóa để phân biệt chưa chạy, đang chạy, xong không có dòng mới, thiếu tỷ lệ, lỗi.",
+      "specs": [
+        "INC_DB §4.2, RLS, chuyển trạng thái",
+        "FR-INC-001 AC6",
+        "Q82, Q83 (đã chốt)"
+      ],
+      "dod": [
+        "Cột theo INC_DB §4.2: lock_id (duy nhất, khóa ngoại business_day_locks), business_day_id (lặp có chủ ý), status chỉ running, succeeded, rate_missing, failed (mặc định running), started_at mặc định clock_timestamp(), finished_at, rows_written, rows_skipped (không âm), requested_by (rỗng là job tự chạy), error_code",
+        "CHECK: (status là running) bằng (finished_at rỗng) và finished_at không sớm hơn started_at; (status là failed hoặc rate_missing) bằng (error_code có giá trị); status khác succeeded thì rows_written và rows_skipped đều 0",
+        "Chỉ mục duy nhất theo lock_id, theo business_day_id, và một phần theo (status, started_at) khi status là running, failed hoặc rate_missing (quét dòng treo hoặc cần xử lý)",
+        "Trigger incentive_runs_guard_transitions() BEFORE UPDATE chỉ cho: running sang succeeded, rate_missing hoặc failed; rate_missing hoặc failed sang running; running sang running (thử lại sau lần chạy treo); succeeded là cuối; mọi chuyển khác raise; chặn DELETE; thu quyền delete, truncate khỏi service_role",
+        "RLS bật, SELECT cho ROLE-005 và ROLE-007 (Q83); không có policy ghi cho authenticated; ghi chỉ qua worker_incentive_run_begin, worker_incentive_run_fail, job_incentive_calculate và rpc_incentive_rerun",
+        "Điều kiện dòng treo (stale) áp ở lớp đọc theo điều kiện dùng chung đã chốt ở E06-DOC-01a (quá 5 phút và outbox không còn retry_wait); DB không tự đổi status của dòng running, chỉ giữ các CHECK và trigger chuyển trạng thái ở trên"
+      ],
+      "depends": [
+        "E06-DB-01",
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05",
+        "E01-DB-01"
+      ]
+    },
+    {
+      "key": "E06-BE-01",
+      "type": "be",
+      "special": "完納奨励金 (tỷ lệ có phiên bản)",
+      "parent_of": [
+        "E06-BE-01a",
+        "E06-BE-01b",
+        "E06-BE-01c"
+      ],
+      "title": "INC_JOB_CALCULATE: job_incentive_calculate (tính 完納奨励金 khi khóa ngày)",
+      "goal": "Job sau sự kiện business_day_locked ghi dòng original cho mỗi giao dịch confirmed; chia 3 sub-issue.",
+      "specs": [
+        "FR-INC-001",
+        "INC_INCENTIVE_CALCULATE_TECH §4.1..§4.6",
+        "ADR-003 R8",
+        "ADR-007"
+      ],
+      "dod": [
+        "Hoàn thành khi 3 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E06-BE-01a",
+      "type": "be",
+      "special": "outbox + worker (ADR-007)",
+      "title": "Job thưởng (a): nhận sự kiện, worker_incentive_run_begin và fail, idempotent, dòng treo",
+      "goal": "Phần worker của job: bắt đầu lần chạy trong giao dịch riêng, thử lại, đánh dấu failed khi hết lượt.",
+      "specs": [
+        "INC_INCENTIVE_CALCULATE_TECH §4.1, §4.2 (trạng thái already_done)",
+        "OUTBOX_DB §4.1.1 (business_day_locked)",
+        "INC_DB §4.2",
+        "ADR-007 R7, R11",
+        "Q82 (đã chốt)"
+      ],
+      "dod": [
+        "Nhận dòng outbox business_day_locked với payload đủ {business_day_id, business_date, lock_id, lock_no} và gọi hàm bằng service role; job_incentive_calculate là security definer, thu quyền thực thi khỏi anon và authenticated; lần khóa source migration không phát sự kiện nên job không chạy cho ngày di trú",
+        "worker_incentive_run_begin(p_lock_id) trong giao dịch riêng commit ngay: chèn dòng running hoặc, khi trùng lock_id, chuyển lại running (reset started_at, finished_at, error_code, rows_written, rows_skipped, requested_by rỗng) chỉ khi trạng thái là running hoặc failed; có dòng trả về thì gọi job; không trả dòng (đã succeeded hoặc rate_missing) thì bỏ qua job và đi tiếp bước báo cáo",
+        "Giao ít nhất một lần: hai worker cùng lấy hoặc giao lại sau khi xong thì trả {ok:true, already_done:true}, không ghi gì, log INFO; dòng rate_missing không coi là xong cho chạy lại thủ công nhưng worker giao lại đã bỏ qua ở bước begin",
+        "Lỗi (exception, timeout, mất kết nối) thì worker ghi last_error, retry_wait (attempt_count đã được worker_outbox_claim của E08-BE-08a tăng một lần khi nhận, kết quả lỗi chỉ ghi last_error và lịch retry, không tăng lần nữa), dòng incentive_runs giữ running trong lúc còn lượt; hết max_attempts 3 thì worker_incentive_run_fail(lock_id, INTERNAL_ERROR) trong giao dịch riêng (failed, finished_at, error_code), outbox failed và ops_alerts job_failed mức critical; log job ERROR",
+        "Dòng running thỏa điều kiện treo dùng chung (quá 5 phút và outbox không còn retry_wait, worker chết) được API đọc coi như failed và cho chạy lại ghi đè; giám sát quét bằng chỉ mục một phần của incentive_runs",
+        "Tuần tự với báo cáo: cùng sự kiện còn bên nhận worker báo cáo, chạy job thưởng trước rồi báo cáo, lỗi bên nào cũng thử lại cả cặp, lần thử lại job thưởng trả already_done (G19)",
+        "Quyền thực thi từng hàm worker: worker_incentive_run_begin, worker_incentive_run_fail và job_incentive_calculate là security definer với search_path rỗng và tên đầy đủ schema, thu quyền execute khỏi PUBLIC, anon và authenticated (ADR-002 R8), chỉ service role gọi được"
+      ],
+      "depends": [
+        "E06-DB-02",
+        "E06-DOC-01a",
+        "E05-BE-03",
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03",
+        "E10-AUD-02",
+        "E10-API-02"
+      ],
+      "parent": "E06-BE-01"
+    },
+    {
+      "key": "E06-BE-01b",
+      "type": "be",
+      "special": "完納奨励金 (tỷ lệ có phiên bản)",
+      "title": "Job thưởng (b): tuần tự hóa, tra tỷ lệ, tính và ghi dòng original",
+      "goal": "Lõi tính: khóa advisory, tra phiên bản tỷ lệ theo ngày nghiệp vụ, tính base_amount, is_timely, incentive_jpy và INSERT original.",
+      "specs": [
+        "INC_INCENTIVE_CALCULATE_TECH §4.2 (bước 1..3), §4.3, §4.4",
+        "FR-INC-001 AC1..AC5",
+        "ADR-003 R8",
+        "Q25, Q26 (đã chốt), Q45 (xem E06-CLR-01)"
+      ],
+      "dod": [
+        "Lấy pg_advisory_xact_lock(incentive, business_day_id) trước advisory của write_audit, rồi đọc incentive_runs của lần khóa FOR UPDATE (đã succeeded thì already_done); thứ tự khóa: advisory, incentive_runs, INSERT incentive_results (FK kéo FOR KEY SHARE), write_audit cuối; job chỉ đọc trades, không khóa hàng; không bỏ qua lần khóa đã bị mở lại (unlocked_at khác rỗng)",
+        "Tra phiên bản tỷ lệ bằng active_rule_version(incentive_rate, business_date) theo ngày nghiệp vụ của giao dịch, không theo giờ chạy (mọi giao dịch cùng ngày cùng một phiên bản); lưu rule_version_id trên từng dòng",
+        "Không có phiên bản hiệu lực: không ghi dòng nào; ops_alerts rate_version_missing mức warning với payload {lock_id, business_date} chỉ khi chưa có alert cùng lock_id (chạy lại không nhân đôi); incentive_runs thành rate_missing với error_code RATE_VERSION_NOT_FOUND; chỉ khi gọi từ job: write_audit incentive.calculate_skipped (khi gọi từ rerun thì audit theo E06-BE-02); COMMIT và trả {ok:true, rate_missing:true} (không raise để worker không thử lại vô ích); log WARN",
+        "Tập giao dịch: trades của ngày có status confirmed và confirmed_at không muộn hơn locked_at của lần khóa; base_amount là giá trị hiệu lực tại thời điểm khóa (bút toán có id lớn nhất trong các bút toán có created_at không muộn hơn locked_at, không có thì qty nhân đơn giá của trades; mới nhất theo id, không theo timestamp)",
+        "is_timely bằng deliveries.status completed và completed_at sớm hơn locked_at (không gia hạn; exception, waiting, in_progress đều false); incentive_jpy là floor(base_amount nhân (incentive_rate chia 100) nhân 110 chia 100) khi đúng hạn, bằng 0 khi không đúng hạn; tính hoàn toàn bằng numeric (không qua float) rồi ép bigint; không làm tròn base_amount trước",
+        "Một câu INSERT SELECT (khoảng 1.200 dòng ngày cao điểm) với ON CONFLICT (trade_id) WHERE kind là original DO NOTHING; n_rows là số dòng chèn, n_skipped là số giao dịch của tập đã có original từ lần khóa trước; dòng original bằng 0 vẫn được ghi cho giao dịch không đúng hạn (baseline, Q56 cần dòng này); phạm vi hiển thị chờ E06-CLR-01 (Q45)"
+      ],
+      "depends": [
+        "E06-BE-01a",
+        "E06-DB-01",
+        "E03-DB-01",
+        "E04-DB-03",
+        "E07-DB-01",
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05"
+      ],
+      "parent": "E06-BE-01"
+    },
+    {
+      "key": "E06-BE-01c",
+      "type": "be",
+      "special": "完納奨励金 (tỷ lệ có phiên bản)",
+      "title": "Job thưởng (c): bù delta cho bút toán sau khóa, cập nhật trạng thái chạy và audit",
+      "goal": "Bù dòng delta cho bút toán duyệt sau khóa trước khi job chạy; ghi kết quả chạy và audit.",
+      "specs": [
+        "INC_INCENTIVE_CALCULATE_TECH §4.5, §4.6",
+        "INC_POST_LOCK_DELTA_TECH §4.3 nhánh (c), §4.4",
+        "INC_DB §4.1 (ghi chú bù delta)"
+      ],
+      "dod": [
+        "Với mỗi bút toán của các giao dịch vừa được chèn original có created_at muộn hơn locked_at của lần khóa này và chưa có dòng delta: ghi delta theo đúng công thức của E06-BE-04 (cùng phiên bản và is_timely của original) theo thứ tự id của bút toán; bút toán duyệt xong trước khóa đã nằm trong base_amount nên không bù",
+        "Phân loại trước và sau khóa chỉ dựa created_at và locked_at đều là clock_timestamp() lấy sau khi giữ khóa ngày (H3); UQ adjustment_entry_id chống ghi trùng với nhánh delta của rpc_adjustment_decide",
+        "Cập nhật incentive_runs thành succeeded với finished_at, rows_written bằng n_rows cộng số delta bù, rows_skipped, cùng giao dịch với các INSERT; chạy xong mà rows_written bằng 0 vẫn là succeeded (dấu hiệu job xong, không có dòng mới)",
+        "Mỗi lần chạy ghi đúng một audit: khi gọi từ job, hàm lõi ghi incentive.calculate (hoặc incentive.calculate_skipped khi thiếu tỷ lệ) với actor_role system; khi gọi từ rpc_incentive_rerun hàm lõi không ghi audit, audit incentive.rerun do RPC đó ghi (xem E06-BE-02); after gồm rule_version_id, rows, skipped, timely_rows, total_jpy, catchup_deltas; là khóa cuối; job không phát outbox; log job INFO kèm rows và durationMs, không ghi số tiền từng giao dịch"
+      ],
+      "depends": [
+        "E06-BE-01b",
+        "E06-BE-04",
+        "E10-AUD-02"
+      ],
+      "parent": "E06-BE-01"
+    },
+    {
+      "key": "E06-BE-02",
+      "type": "be",
+      "special": "完納奨励金 (tỷ lệ có phiên bản)",
+      "title": "INC_RESULT_RERUN: rpc_incentive_rerun (chạy lại một lần khóa)",
+      "goal": "ROLE-005 chạy lại thủ công một lần khóa khi thiếu tỷ lệ hoặc job lỗi, dùng chung hàm lõi với job.",
+      "specs": [
+        "FR-INC-001 AC7",
+        "INC_INCENTIVE_CALCULATE_TECH §4.7",
+        "api-list INC_RESULT_RERUN",
+        "Q46, Q81, Q82 (đã chốt)"
+      ],
+      "dod": [
+        "Route: 401, 403 (không phải ROLE-005), MFA_REQUIRED (aal2 ở proxy), 415 và 400 khi body hỏng; lockId không phải số nguyên dương thì VALIDATION kèm fields; RPC kiểm aal2 trước has_role (MFA_REQUIRED trước FORBIDDEN, không audit); lockId không tồn tại thì NOT_FOUND",
+        "Khóa cùng thứ tự với job: advisory (incentive, ngày), rồi incentive_runs FOR UPDATE, kiểm trạng thái sau khi giữ khóa; chưa có dòng incentive_runs, đã succeeded, hoặc running chưa thỏa điều kiện treo dùng chung (running quá 5 phút (Q82) và outbox của lần khóa không còn retry_wait (INC_INCENTIVE_CALCULATE_TECH §4.1 bước 2b)) thì INVALID_STATE (M_INC_019); chỉ chạy lại ở rate_missing, failed, hoặc running đã treo",
+        "Chuyển dòng sang running (requested_by là người gọi, started_at mới, finished_at và error_code rỗng) rồi gọi hàm lõi dùng chung với job (tra tỷ lệ, original, bù delta, cập nhật incentive_runs, audit); idempotent (ON CONFLICT DO NOTHING, UQ adjustment_entry_id); thiếu tỷ lệ vẫn rate_missing, không nhân đôi ops_alerts, trả ok với status rate_missing; có tỷ lệ thì succeeded",
+        "Hàm lõi không tự ghi audit khi gọi từ rerun; đúng một write_audit incentive.rerun (actor_role của ROLE-005, after gồm status, rows_written, rows_skipped, kể cả khi vẫn thiếu tỷ lệ; không ghi thêm incentive.calculate hay incentive.calculate_skipped) là khóa cuối cùng; lõi lỗi thì rollback cả RPC, dòng incentive_runs giữ nguyên, trả 500 kèm requestId và log ERROR pgCode; không phát outbox (báo cáo ngày không tự sinh lại, Q81, ROLE-005 sinh tay)",
+        "Response 200 gồm ok, lock_id, status (succeeded hoặc rate_missing), rows_written, rows_skipped; hai ROLE-005 bấm cùng lúc: lần đầu succeeded thì lần sau INVALID_STATE; lần đầu vẫn rate_missing thì lần sau được phép chạy lại và có thể trả 200 rate_missing (không nhân đôi ops_alerts); lần đầu exception (rollback, trạng thái giữ nguyên) thì lần sau xét theo trạng thái đã rollback"
+      ],
+      "depends": [
+        "E06-BE-01b",
+        "E06-BE-01c",
+        "E06-DOC-01a",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06"
+      ]
+    },
+    {
+      "key": "E06-BE-03",
+      "type": "be",
+      "special": "完納奨励金 (tỷ lệ có phiên bản)",
+      "title": "INC_RESULT_LIST: kết quả tính theo ngày và lần khóa",
+      "goal": "Đọc kết quả thưởng, trạng thái chạy và tổng hợp cho S-028.",
+      "specs": [
+        "api-list INC_RESULT_LIST",
+        "INC_CALCULATION_RESULT_SPEC §4.3, §6 A1, A2, A9",
+        "FR-INC-001 AC5, AC6"
+      ],
+      "dod": [
+        "Route GET: 401, 403 (không phải ROLE-005), aal2 bắt buộc; query dayId, lockId (bỏ trống là lần khóa gần nhất), timely, q (tối đa 50 ký tự, chứa, không phân biệt hoa thường, trên mã giao dịch, mã và tên bên mua), limit, cursor; tham số sai thì VALIDATION; dayId hoặc lockId không tồn tại thì NOT_FOUND",
+        "Ngày mặc định là ngày có locked_at mới nhất bất kể trạng thái ngày hiện tại, lần khóa mặc định là lock_no lớn nhất; chưa có ngày nào từng khóa thì day rỗng; C-4 chỉ gồm ngày đã có ít nhất một dòng business_day_locks",
+        "calc_status suy từ incentive_runs của lần khóa: không có dòng thì pending; running; failed; rate_missing; succeeded thì inherited chỉ khi lock_no lớn hơn 1 và rows_skipped lớn hơn 0 và rows_written bằng 0, mọi trường hợp succeeded còn lại là computed (kể cả ngày không có giao dịch, rows_written bằng 0 và rows_skipped bằng 0; S-028 hiển thị M_COM_021); dòng running thỏa điều kiện treo dùng chung (running quá 5 phút (Q82) và outbox của lần khóa không còn retry_wait (INC_INCENTIVE_CALCULATE_TECH §4.1 bước 2b)) thì trả failed kèm run.stale bằng true; run gồm status, started_at, finished_at, rows_written, rows_skipped, requested_by_name (rỗng là job), error_code, stale; run rỗng khi pending",
+        "summary trên cả lần khóa (không theo bộ lọc) theo api-list: considered, timely, not_timely, base_total, incentive_total, rule_version (version_code, incentive_rate); items[] gồm trade_code, trade_type, buyer (code, name), base_amount, completed_at, is_timely, rule_version (version_code, incentive_rate), incentive_jpy, computed_at; keyset theo trades.id tăng dần, limit 20; khi có q thì không trả tổng theo lọc (G-13 chỉ hiện số đã tải)",
+        "ROLE-006 không đọc được API này (chỉ ROLE-005); không ghi gì"
+      ],
+      "depends": [
+        "E06-DB-01",
+        "E06-DB-02",
+        "E06-DOC-01a",
+        "E05-BE-01",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06",
+        "E07-DB-01"
+      ]
+    },
+    {
+      "key": "E06-BE-04",
+      "type": "be",
+      "special": "完納奨励金 delta",
+      "title": "Nhánh delta 完納奨励金 trong rpc_adjustment_decide (E06-INC-POST-LOCK-DELTA)",
+      "goal": "Logic sinh dòng delta khi duyệt điều chỉnh cho giao dịch của ngày đã khóa; E-04 chỉ gọi, E-06 sở hữu công thức và phân nhánh.",
+      "specs": [
+        "FR-INC-003 AC1..AC4",
+        "INC_POST_LOCK_DELTA_TECH §4.3, §4.4, §4.5",
+        "ADR-006 R6",
+        "ADR-003 R8",
+        "Q14, Q33, Q56 (đã chốt)"
+      ],
+      "dod": [
+        "Điều kiện sinh delta là giao dịch đã có dòng original của incentive_results (không phải is_post_lock); ngày gốc reopened đã có original vẫn ghi delta; chưa thấy original thì lấy advisory (incentive, ngày gốc) rồi đọc lại (job vừa commit thì thấy original); trong cùng giao dịch với bút toán, không qua outbox",
+        "Không vòng chờ với job: rpc_adjustment_decide giữ trades FOR NO KEY UPDATE, job chỉ lấy FOR KEY SHARE qua khóa ngoại nên tương thích (dùng FOR UPDATE trên trades thì sinh vòng chờ); thứ tự khóa theo ADJ_ADJUSTMENT_DECIDE_TECH 4.3",
+        "Vẫn không có original: (a) ngày gốc chưa từng có khóa thì không có delta (thưởng gốc sẽ tính khi khóa với base đã gồm bút toán), trạng thái none; (b) nhánh rate_missing chỉ áp khi giao dịch có confirmed_at không muộn hơn locked_at của lần khóa gần nhất (theo bảng Error của INC_POST_LOCK_DELTA_TECH §4.3; bước Detail §4.3 không nêu điều kiện này, ghi vào chỗ hở): khi đó, nếu lần khóa gần nhất có incentive_runs rate_missing hoặc failed, hoặc source migration, thì chèn ops_alerts rate_version_unknown mức warning (mỗi bút toán tối đa một alert), không ghi delta, bút toán vẫn ghi, trạng thái rate_missing; giao dịch xác nhận sau lần khóa gần nhất (ví dụ trong lúc ngày reopened) chưa thuộc tập job của lần khóa đó nên không gán rate_missing, trạng thái chốt ở E06-DOC-01a; (c) chưa có dòng incentive_runs hoặc đang running thì bỏ qua, trạng thái deferred (job bù ở E06-BE-01c)",
+        "Có original: r là incentive_rate chia 100 của phiên bản gốc (qua rule_version_id, không dùng bản hiện hành); original đúng hạn thì incentive_jpy bằng floor(a_after nhân r nhân 110 chia 100) trừ floor(a_before nhân r nhân 110 chia 100) với a bằng qty nhân đơn giá không làm tròn (Q33); không đúng hạn thì vẫn ghi delta với incentive_jpy 0 và is_timely false (Q56); 逆仕訳 (qty_after bằng 0) thì bằng trừ floor(a_before nhân r nhân 110 chia 100)",
+        "INSERT delta với lock_id rỗng, rule_version_id của original, base_amount là amount_delta của bút toán, business_day_id là ngày ghi sổ; UQ adjustment_entry_id vi phạm là lưới an toàn (rollback, 500); trả cho E04-BE-03c kết quả có cấu trúc {status (computed, not_timely, rate_missing, deferred, none), incentive_jpy, rule_version_id} để hợp nhất vào response và đúng một audit adjustment.approve",
+        "Alert rate_version_unknown và nhánh bỏ qua không làm rollback bút toán; thiếu tỷ lệ gốc không bao giờ tự dùng tỷ lệ hiện hành"
+      ],
+      "depends": [
+        "E06-DB-01",
+        "E06-DB-02",
+        "E04-DB-02",
+        "E10-AUD-02",
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03",
+        "E06-DOC-01a"
+      ]
+    },
+    {
+      "key": "E06-BE-05",
+      "type": "be",
+      "special": "完納奨励金 delta",
+      "title": "INC_DELTA_LIST: danh sách chênh lệch sau khóa của ngày đang mở",
+      "goal": "Đọc bút toán sau khóa và delta thưởng cho S-031.",
+      "specs": [
+        "api-list INC_DELTA_LIST",
+        "INC_POST_LOCK_DELTA_SPEC §4.3, §6",
+        "FR-INC-003",
+        "Q47 (đã chốt)"
+      ],
+      "dod": [
+        "Route GET: 401, 403 (không phải ROLE-005), aal2; không nhận ngày từ client (ngày là ngày nghiệp vụ hiện tại); cursor hỏng thì VALIDATION; day gồm id, business_date, status, lock_no, closed_at hoặc rỗng khi hôm nay chưa có dòng business_days",
+        "summary trên cả ngày: entries (bút toán is_post_lock của ngày), amount_delta_total, incentive_delta_total, not_timely (số bút toán có delta is_timely false), rate_missing và rate_missing_trade_codes[] chỉ đếm bút toán có incentive.status là rate_missing (gốc không có original do thiếu tỷ lệ, lần khóa di trú hoặc job hết lượt), loại deferred (chờ job bù, không có alert); dùng cùng bộ phân loại với items (S-031 §6 A3, F-3; E-5 mô tả rộng hơn, ghi vào chỗ hở)",
+        "items[] mỗi bút toán một khối: entry_id, request_id, request_code (ADJ-NNNNNN), trade_code, origin_business_date, entry_type, qty và đơn giá trước, sau, chênh lệch, amount_delta, created_by_name, created_at, incentive (status computed, not_timely, rate_missing, deferred; rule_version version_code và incentive_rate; is_timely; incentive_jpy); keyset theo created_at giảm rồi id giảm, limit 20",
+        "Chỉ đọc; không ghi gì; NO_OPEN_BUSINESS_DAY và DAY_LOCKED không phát sinh ở API này",
+        "Tham số dayId nếu client gửi: xử lý theo quyết định ở E06-DOC-01a (bỏ qua hoặc VALIDATION); màn không gửi dayId"
+      ],
+      "depends": [
+        "E06-DB-01",
+        "E04-DB-02",
+        "E04-DB-01",
+        "E06-DOC-01a",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06",
+        "E06-DB-02",
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03"
+      ]
+    },
+    {
+      "key": "E06-BE-06",
+      "type": "be",
+      "special": "業務規程 có phiên bản",
+      "title": "INC_RULE_VERSION_CREATE: rpc_rule_version_create (tạo phiên bản, rollback)",
+      "goal": "ROLE-006 tạo phiên bản tỷ lệ hoặc 業務規程 với ngày hiệu lực tương lai; rollback là phiên bản mới.",
+      "specs": [
+        "FR-INC-002 AC1, AC5",
+        "INC_RULE_VERSIONING_TECH §4.1..§4.3, §5",
+        "ADR-003 R4, R7, R9",
+        "Q25 (đã chốt), Q30 (xem E06-CLR-02)"
+      ],
+      "dod": [
+        "Route: 401, 403 (không phải ROLE-006), MFA_REQUIRED, 415 và 400; kind ngoài incentive_rate và market_rule, ngày không phải ISO, incentiveRate (chuỗi phần trăm) không khớp 0 đến 100 tối đa hai chữ số thập phân, reason rỗng sau trim hoặc quá 500 ký tự thì VALIDATION kèm fields; không nhận status, approved_by, version_code từ client; tỷ lệ đi dạng chuỗi vào numeric(5,2), không qua float",
+        "RPC kiểm aal2 trước has_role (không audit khi từ chối); effective_from không sau hôm nay (ngày nghiệp vụ JST) thì VALIDATION fields.effectiveFrom; incentive_rate thiếu tỷ lệ hoặc có params khác rỗng; market_rule có tỷ lệ, params có khóa ngoài danh mục hoặc sai kiểu thì VALIDATION kèm fields.incentiveRate hoặc fields.params.{khóa}; market_rule là ảnh chụp đầy đủ mọi khóa",
+        "Rollback: rollbackOfId không tồn tại thì NOT_FOUND; khác kind thì VALIDATION fields.rollbackOfId; bản nguồn chưa từng áp dụng (status ngoài active và superseded) thì INVALID_STATE kèm params [trạng thái, rollback] (M_INC_003); server chép incentive_rate và params từ bản nguồn, bỏ giá trị client gửi; client chỉ quyết effective_from và reason",
+        "pg_advisory_xact_lock(rule_version_code, kind) rồi sinh version_code RATE-YYYY-NN hoặc RULE-YYYY-NN (NN là số thứ tự trong năm theo kind); INSERT pending_approval với created_by là người gọi; write_audit rule_version.create (before rỗng, after là bản mới, kèm reason) là khóa cuối; đủ hạn mức năm vẫn tạo được; response gồm ok, id, version_code, status",
+        "Nội dung bất biến sau khi tạo (rule_versions_guard của E10); không có API sửa"
+      ],
+      "depends": [
+        "E06-DOC-01b",
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05",
+        "E10-AUD-02",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06",
+        "E06-CLR-02"
+      ]
+    },
+    {
+      "key": "E06-BE-07",
+      "type": "be",
+      "special": "hai người (người yêu cầu khác người duyệt)",
+      "title": "INC_RULE_VERSION_APPROVE: rpc_rule_version_approve (duyệt, hạn mức 4 lần mỗi năm)",
+      "goal": "ROLE-006 khác người lập duyệt: kiểm hai người, ngày hiệu lực, hạn mức chung, trùng bản chờ.",
+      "specs": [
+        "FR-INC-002 AC2, AC4",
+        "INC_RULE_VERSIONING_TECH §4.2, §4.4",
+        "ADR-003 R4, R6",
+        "Q15, Q58, Q59 (đã chốt), Q30 (xem E06-CLR-02)"
+      ],
+      "dod": [
+        "Route: 401, 403, MFA_REQUIRED, 415, 400; id không khớp số thì VALIDATION; RPC kiểm aal2 trước has_role; khóa hàng rule_versions FOR UPDATE; không có thì NOT_FOUND",
+        "Thứ tự kiểm: status khác pending_approval thì INVALID_STATE kèm params [status, approve]; người gọi là người lập thì SELF_APPROVAL_FORBIDDEN (M_INC_002, không audit); effective_from không sau hôm nay thì VALIDATION fields.effectiveFrom kèm params [effective_from] (M_INC_014); số bản có approved_at trong cùng năm dương lịch JST đã đủ 4 thì RULE_CHANGE_LIMIT_REACHED kèm params [năm] (M_INC_001); đã có bản scheduled cùng kind cùng effective_from thì CONFLICT kèm params [version_code bản có sẵn, effective_from] (M_INC_015)",
+        "Đếm hạn mức trong pg_advisory_xact_lock(rule_version_limit) lấy trước khi đếm (hai lần duyệt song song không cùng lọt lần thứ 4, và không cùng lọt hai bản trùng ngày): đếm chung hai kind không lọc theo kind, rollback là phiên bản mới nên có tính, bản scheduled bị hủy sau duyệt vẫn tính (Q59), tính theo approved_at; chỉ mục duy nhất một phần rule_versions_scheduled_uq là lưới DB (vi phạm thì CONFLICT với params rỗng)",
+        "Thành công: status scheduled, approved_by, approved_at; write_audit rule_version.approve; response gồm ok, id, status, approved_at, approvals_in_year; thứ tự khóa rule_versions, advisory hạn mức, advisory write_audit cuối",
+        "Phạm vi hạn mức theo quyết định ở E06-CLR-02 (Q30 chốt tách tham số vận hành khỏi hạn mức, spec đang đếm cả market_rule)"
+      ],
+      "depends": [
+        "E06-BE-06",
+        "E06-DOC-01b",
+        "E10-AUD-02",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06",
+        "E06-CLR-02"
+      ]
+    },
+    {
+      "key": "E06-BE-08",
+      "type": "be",
+      "special": "hai người (người yêu cầu khác người duyệt)",
+      "title": "INC_RULE_VERSION_REJECT: rpc_rule_version_reject (từ chối phiên bản chờ duyệt)",
+      "goal": "Từ chối bản chờ duyệt (ROLE-006 khác người lập), bắt buộc lý do.",
+      "specs": [
+        "FR-INC-002 AC2",
+        "INC_RULE_VERSIONING_TECH §4.5",
+        "api-list INC_RULE_VERSION_REJECT",
+        "ADR-003 R4"
+      ],
+      "dod": [
+        "Route: 401, 403, MFA_REQUIRED, 415, 400; reason rỗng sau trim hoặc quá 500 ký tự thì VALIDATION kèm fields.reason; RPC kiểm aal2 trước has_role; khóa hàng FOR UPDATE; không có thì NOT_FOUND",
+        "status khác pending_approval thì INVALID_STATE (M_INC_003 kèm params [status, reject]); người gọi là người lập thì SELF_APPROVAL_FORBIDDEN (M_INC_002); thành công thì rejected kèm reject_reason, rejected_by, rejected_at; không tính hạn mức; write_audit rule_version.reject (khóa cuối); response gồm ok, id, status"
+      ],
+      "depends": [
+        "E06-BE-06",
+        "E06-DOC-01b",
+        "E10-AUD-02",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06"
+      ]
+    },
+    {
+      "key": "E06-BE-09",
+      "type": "be",
+      "special": "業務規程 có phiên bản",
+      "title": "INC_RULE_VERSION_LIST và GET: danh sách, trục thời gian và chi tiết phiên bản",
+      "goal": "Đọc phiên bản cho S-029 và S-030, kèm bộ đếm hạn mức.",
+      "specs": [
+        "api-list INC_RULE_VERSION_LIST, INC_RULE_VERSION_GET",
+        "INC_RATE_VERSION_LIST_SPEC §4.3, §6 A1..A3",
+        "INC_RATE_VERSION_DETAIL_SPEC §4.3",
+        "Q15, Q58 (đã chốt)"
+      ],
+      "dod": [
+        "Quyền: ROLE-005 và ROLE-006 đều aal2 và chỉ đọc; query kind (hai giá trị, sai thì VALIDATION), group (tóm tắt, timeline, off_axis), limit, cursor",
+        "Chế độ tóm tắt: counts theo kind (mọi trạng thái), limit_usage (năm dương lịch JST, used, max 4, đếm chung theo approved_at) và active (một bản status active của kind, hoặc rỗng; kèm tên người lập và người duyệt)",
+        "group=timeline: bản scheduled, active, superseded, cancelled sắp theo effective_from giảm rồi id giảm, keyset 20 mục, kèm total và các mốc approved_at, superseded_at, cancelled_at; group=off_axis: bản pending_approval trước (created_at tăng) rồi rejected (rejected_at giảm), tối đa 20 dòng, kèm counts_off_axis (giới hạn 20 chờ S-029 OQ-4)",
+        "INC_RULE_VERSION_GET: id không tồn tại thì NOT_FOUND; trả đủ trường (version_code, kind, status, effective_from, params, incentive_rate, rollback_of, reason, các cặp người và thời điểm lập, duyệt, từ chối, hủy, activated_at, superseded_at, cancel_reason, reject_reason), limit_usage kèm approvals[] (version_code, approved_at) và current_active cùng kind (rỗng khi chưa có bản active)"
+      ],
+      "depends": [
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05",
+        "E06-DOC-01b",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06"
+      ]
+    },
+    {
+      "key": "E06-BE-10",
+      "type": "be",
+      "special": "業務規程 có phiên bản",
+      "title": "INC_JOB_RULE_ACTIVATE: job_rule_version_activate (kích hoạt phiên bản đầu ngày)",
+      "goal": "pg_cron 00:05 JST chuyển bản đến hạn sang active, bản cũ sang superseded, phát RPT-12 cho tỷ lệ.",
+      "specs": [
+        "FR-INC-002 AC3",
+        "INC_RULE_VERSIONING_TECH §4.6, §4.7",
+        "ADR-003 R5",
+        "Q51 (đã chốt)"
+      ],
+      "dod": [
+        "Chạy 00:05 JST hằng ngày; mỗi kind một giao dịch: khóa các bản active và scheduled của kind FOR UPDATE theo effective_from; bản đến hạn là scheduled có effective_from không muộn hơn hôm nay (JST); nhiều bản đến hạn (job bị lỡ) thì bản cũ hơn chuyển active rồi superseded ngay, bản mới nhất thành active",
+        "Bản active cũ thành superseded (superseded_at), bản mới thành active (activated_at); mỗi kind tối đa một bản active (chỉ mục duy nhất của E10); write_audit rule_version.activate (actor_role system) mỗi bản",
+        "Chỉ kind incentive_rate phát outbox rule_version_activated (dedup rule_version_activated:{id}, payload {rule_version_id, version_code, effective_from}, không critical, max_attempts 3) để sinh RPT-12; market_rule không phát (Q51)",
+        "Lỗi (vi phạm chỉ mục active, DB lỗi) thì rollback kind đó, log job ERROR, ghi ops_alerts job_failed mức critical trong giao dịch riêng sau rollback; lần chạy sau làm lại (idempotent); outbox hết lượt thì worker đánh failed và ops_alerts job_failed; chạy hai lần trong ngày thì lần hai không còn bản đến hạn",
+        "active_rule_version không phụ thuộc job (bản có effective_from lớn nhất không muộn hơn ngày, trong scheduled, active, superseded) nên phép tính đúng cả khi job trễ; lịch dự phòng khi lần 00:05 lỗi theo quyết định ở E06-DOC-01b",
+        "job_rule_version_activate là security definer với search_path rỗng, thu quyền execute khỏi PUBLIC, anon và authenticated (ADR-002 R8); chỉ pg_cron hoặc service role gọi được"
+      ],
+      "depends": [
+        "E06-BE-06",
+        "E06-BE-07",
+        "E06-DOC-01b",
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05",
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03",
+        "E10-AUD-02"
+      ]
+    },
+    {
+      "key": "E06-FE-01",
+      "type": "fe",
+      "special": "完納奨励金 (tỷ lệ có phiên bản)",
+      "parent_of": [
+        "E06-FE-01a",
+        "E06-FE-01b",
+        "E06-FE-01c"
+      ],
+      "title": "S-028 INC_CALCULATION_RESULT: kết quả tính 完納奨励金",
+      "goal": "Màn của ROLE-005: xem kết quả theo ngày và lần khóa, một thao tác ghi là chạy lại; 6 trạng thái (normal, rate-missing, empty, running, failed, inherited), chia 3 sub-issue.",
+      "specs": [
+        "INC_CALCULATION_RESULT_SPEC (6 trạng thái; bảng 'Hiển thị theo trạng thái tính')",
+        "FR-INC-001"
+      ],
+      "dod": [
+        "Hoàn thành khi 3 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E06-FE-01a",
+      "type": "fe",
+      "special": "完納奨励金 (tỷ lệ có phiên bản)",
+      "title": "S-028a: khung màn, chọn ngày và lần khóa, banner 6 trạng thái, thẻ tổng hợp",
+      "goal": "Mở màn, C-4, C-5, banner D-1, D-2, thẻ E-1..E-6, khối quy tắc F.",
+      "specs": [
+        "INC_CALCULATION_RESULT_SPEC §4.1 (A..F), §5 (Initializing, C-4, C-5, D-1 link), §6 A1, A2, A9, 'Hiển thị theo trạng thái tính'"
+      ],
+      "dod": [
+        "Mở màn: proxy xử lý hết phiên (M_COM_004, M_COM_005), tài khoản bị khóa (M_PAU_002), role không được phép (về trang chủ, M_COM_006), phiên aal1 (bước TOTP, M_COM_019, xong quay lại URL cũ); aal2 thì skeleton, gọi song song SYS_ME, CLS_DAY_LIST, INC_RESULT_LIST (dayId, lockId từ URL nếu có), C-4 và C-5 theo response, ghi ?dayId=&lockId= bằng replace; chưa có ngày nào từng khóa thì ẩn D đến G, hiện M_COM_021 và khóa C-4",
+        "C-4 chọn ngày đã từng khóa (DD/MM/YYYY kèm trạng thái), đổi ngày thì gọi lại bỏ lockId và cursor, reset lọc; C-5 là chip lần khóa (#lock_no, giờ), thành dropdown khi ngày có nhiều hơn một lần khóa, chọn thì gọi lại với lockId; dayId, lockId sai trên URL thì bỏ qua",
+        "Banner D-1 đủ 6 biến thể: computed (đã tính lúc, số giao dịch), inherited (M_INC_017 kèm số lần khóa, giờ, số dòng bỏ qua, liên kết xem lần khóa trước và xem chênh lệch sau khóa), rate_missing (M_INC_005 kèm liên kết xem phiên bản tỷ lệ), pending và running (M_INC_012), failed (M_INC_016); D-2 thông tin lần chạy (bắt đầu, kết thúc hoặc chưa kết thúc, dòng ghi, bỏ qua, bởi Hệ thống hoặc tên người chạy lại, kèm mã lỗi) ẩn khi pending; running quá ngưỡng treo hiển thị như failed",
+        "Thẻ E-1..E-5 là số khi computed hoặc inherited (kể cả 0) và là — ở các trạng thái khác; E-6 phiên bản tỷ lệ (version_code và tỷ lệ phần trăm hai chữ số), rate_missing ghi 'không có' kèm viền cảnh báo, các trạng thái khác —; khối F chữ tĩnh công thức và điều kiện, luôn hiện; thẻ làm tròn hiển thị floor về yên nguyên chỉ ở lớp hiển thị",
+        "Bảng hiển thị theo trạng thái đúng cho cả 6 cột của spec (D-3 chỉ ở rate_missing và failed; G-1..G-14 chỉ khi có dòng original); Lỗi dùng chung: MFA_REQUIRED (bước TOTP, M_COM_019, xong quay lại), SESSION_EXPIRED hoặc UNAUTHENTICATED (M_COM_005, M_COM_004), FORBIDDEN (M_COM_006 rồi về trang chủ), mất mạng hoặc timeout (M_COM_003), 503 (M_COM_002), 500 hoặc mã lạ (M_COM_001 kèm requestId); màn bắt buộc online; không tự làm mới định kỳ; VALIDATION hoặc NOT_FOUND của INC_RESULT_LIST thì bỏ tham số sai khỏi URL, gọi lại mặc định, banner M_COM_008 hoặc M_COM_007"
+      ],
+      "depends": [
+        "E06-BE-03",
+        "E05-BE-01",
+        "E10-SYS-01",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E06-CLR-01"
+      ],
+      "parent": "E06-FE-01"
+    },
+    {
+      "key": "E06-FE-01b",
+      "type": "fe",
+      "special": "完納奨励金 (tỷ lệ có phiên bản)",
+      "title": "S-028b: bảng kết quả theo giao dịch, lọc, tìm, dòng mở rộng công thức",
+      "goal": "Khối G của S-028: bảng, lọc, tìm, G-11, tổng, tải thêm, trạng thái rỗng.",
+      "specs": [
+        "INC_CALCULATION_RESULT_SPEC §4.1 (G-1..G-15), §4.2 (G-2), §5 (G-1, G-2, G-3, G-14)",
+        "FR-INC-001 AC1..AC3, AC5",
+        "Q45 (xem E06-CLR-01)"
+      ],
+      "dod": [
+        "Bảng G ẩn khi lần khóa không có dòng original (calc_status ngoài computed, inherited hoặc không có giao dịch được xét); cột mã giao dịch (mở rộng), loại, bên mua, số tiền hợp lệ, thời điểm 完納 (— khi rỗng), đúng hạn (✔ hoặc ✖), phiên bản tỷ lệ, tiền thưởng; số định dạng #,##0 và căn phải",
+        "G-1 chip Tất cả, Đúng hạn, Không đúng hạn (số trên chip là E-1, E-2, E-3), G-2 tìm sau 300 ms, trim, tối đa 50 ký tự; mỗi thay đổi gọi lại INC_RESULT_LIST (timely, q), bỏ cursor, G-12 tổng cả lần khóa không đổi theo lọc; không có dòng thì M_COM_021 trong vùng bảng",
+        "G-3 mở hoặc đóng dòng chi tiết G-11 ngay dưới dòng, nhiều dòng mở cùng lúc, không gọi API; G-11 hiển thị 4 dòng: số tiền hợp lệ, tỷ lệ (version_code và phần trăm hai chữ số), phép tính floor(base nhân rate chia 100 nhân 110 chia 100), so sánh completed_at với locked_at; giá trị lưu là nguồn sự thật, không tính lại ở client",
+        "G-13 'Hiển thị a / b' (khi có q thì chỉ hiện số đã tải, không có tổng theo lọc; không dùng tổng của cả lần khóa làm tổng kết quả tìm kiếm), G-14 Tải thêm 20 dòng (disabled kèm spinner, ẩn khi next_cursor rỗng); G-15 trạng thái rỗng có chữ riêng cho rate_missing, pending, running, failed, inherited không có dòng mới; không hiển thị qty và đơn giá lúc khóa (S-028 OQ-5 còn mở, chỉ base_amount)"
+      ],
+      "depends": [
+        "E06-FE-01a",
+        "E06-CLR-01"
+      ],
+      "parent": "E06-FE-01"
+    },
+    {
+      "key": "E06-FE-01c",
+      "type": "fe",
+      "special": "完納奨励金 (tỷ lệ có phiên bản)",
+      "title": "S-028c: nút Chạy lại tính toán và các lỗi chạy lại",
+      "goal": "D-3 gọi INC_RESULT_RERUN cho lần khóa đang chọn.",
+      "specs": [
+        "INC_CALCULATION_RESULT_SPEC §4.1 (D-3), §5 (D-3, Error E13, E4a), §6 A5",
+        "FR-INC-001 AC7",
+        "Q46, Q81 (đã chốt)"
+      ],
+      "dod": [
+        "D-3 chỉ hiện khi calc_status là rate_missing hoặc failed (kể cả running đã treo), ẩn ở các trạng thái khác; không có hộp xác nhận (chạy lại idempotent); bấm thì khóa kèm spinner, gọi INC_RESULT_RERUN với lockId lấy từ C-5, không do người dùng gõ",
+        "status succeeded thì toast M_INC_018 (ngày, lần khóa, số dòng ghi) rồi gọi lại INC_RESULT_LIST để hiện computed hoặc inherited; status rate_missing (vẫn thiếu tỷ lệ) thì không toast, gọi lại, D-1 vẫn M_INC_005, D-2 cập nhật giờ chạy",
+        "Sau chạy lại thành công nhắc ROLE-005 sinh lại báo cáo ngày bằng tay (Q81: không tự sinh lại); nội dung nhắc theo quyết định của E06-DOC-01a",
+        "Lỗi: INVALID_STATE thì banner M_INC_019 rồi gọi lại INC_RESULT_LIST để hiện trạng thái thật; NOT_FOUND thì banner M_COM_007 (lần khóa) rồi rơi về mặc định; BAD_REQUEST hoặc UNSUPPORTED_MEDIA_TYPE thì M_COM_018; chặn bấm đôi bằng disabled và bằng INVALID_STATE ở server; lỗi dùng chung như E06-FE-01a"
+      ],
+      "depends": [
+        "E06-FE-01a",
+        "E06-BE-02"
+      ],
+      "parent": "E06-FE-01"
+    },
+    {
+      "key": "E06-FE-02",
+      "type": "fe",
+      "special": "業務規程 có phiên bản",
+      "title": "S-029 INC_RATE_VERSION_LIST: danh sách phiên bản tỷ lệ và 業務規程",
+      "goal": "Màn của ROLE-006 (ROLE-005 chỉ đọc): hai tab, bộ đếm hạn mức, bản đang hiệu lực, trục thời gian, bản ngoài trục; 4 trạng thái (normal, market-rule, limit-reached, empty).",
+      "specs": [
+        "INC_RATE_VERSION_LIST_SPEC (4 trạng thái)",
+        "FR-INC-002",
+        "Q15, Q58 (đã chốt)"
+      ],
+      "dod": [
+        "Mở màn: proxy xử lý hết phiên (M_COM_004, M_COM_005), tài khoản bị khóa (M_PAU_002), role không được phép (về trang chủ, M_COM_006), phiên aal1 (bước TOTP, M_COM_019, xong quay lại URL cũ) cho ROLE-005 và ROLE-006; aal2 thì skeleton, gọi song song SYS_ME và ba lần INC_RULE_VERSION_LIST (tóm tắt, group=timeline, group=off_axis) với kind từ URL (khác hai giá trị thì mặc định incentive_rate); C-4 + Tạo phiên bản mới chỉ ROLE-006 và không bị khóa khi đủ hạn mức; ROLE-005 ẩn hẳn nút và chỉ xem",
+        "D-1 hai tab (tỷ lệ mặc định, 業務規程) kèm badge số phiên bản, đổi tab thì gọi lại ba lần, bỏ cursor, cập nhật ?kind= bằng replace; D-2 bộ đếm 'Đã duyệt năm YYYY: used / 4' lấy từ server (không tự đếm ở client), giống nhau ở hai tab, ghi chú đếm chung và gồm rollback",
+        "D-3 banner: đủ hạn mức (used không nhỏ hơn 4) thì M_INC_001 kèm câu 'vẫn tạo được bản chờ duyệt'; tab không có bản active thì M_INC_013, tab tỷ lệ kèm chữ tĩnh và liên kết về hậu quả khi khóa ngày; E-1..E-5 bản active (mã, giá trị tỷ lệ hai chữ số hoặc 'n tham số', hiệu lực từ, người lập và người duyệt, liên kết chi tiết) hoặc E-6 khi không có",
+        "Trục F theo effective_from mới tới cũ gồm scheduled, active, superseded, cancelled (mốc theo từng trạng thái), F-3 rỗng, F-4 'Hiển thị a / b', F-5 Tải thêm 20 mục, F-6 chú giải; khối G ngoài trục: chờ duyệt rồi bị từ chối, 'bạn' khi người lập là người xem, tối đa 20 dòng, G-7 rỗng; liên kết mở /rule-versions/[id]",
+        "Lỗi: VALIDATION thì bỏ tham số, banner M_COM_008; Lỗi dùng chung: MFA_REQUIRED (bước TOTP, M_COM_019, xong quay lại), SESSION_EXPIRED hoặc UNAUTHENTICATED (M_COM_005, M_COM_004), FORBIDDEN (M_COM_006 rồi về trang chủ), mất mạng hoặc timeout (M_COM_003), 503 (M_COM_002), 500 hoặc mã lạ (M_COM_001 kèm requestId); màn bắt buộc online; không tự làm mới định kỳ"
+      ],
+      "depends": [
+        "E06-BE-09",
+        "E10-SYS-01",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01"
+      ]
+    },
+    {
+      "key": "E06-FE-03",
+      "type": "fe",
+      "special": "業務規程 có phiên bản",
+      "parent_of": [
+        "E06-FE-03a",
+        "E06-FE-03b",
+        "E06-FE-03c"
+      ],
+      "title": "S-030 INC_RATE_VERSION_DETAIL: chi tiết, tạo, duyệt và hủy phiên bản",
+      "goal": "Màn thao tác trên một phiên bản của ROLE-006 (ROLE-005 chỉ đọc); 6 trạng thái wireframe cộng các cột của bảng hiển thị (tạo, chờ duyệt người lập, chờ duyệt người khác, scheduled, active, superseded, cancelled hoặc rejected), chia 3 sub-issue.",
+      "specs": [
+        "INC_RATE_VERSION_DETAIL_SPEC (6 trạng thái wireframe và bảng §6)",
+        "FR-INC-002"
+      ],
+      "dod": [
+        "Hoàn thành khi 3 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E06-FE-03a",
+      "type": "fe",
+      "special": "業務規程 có phiên bản",
+      "title": "S-030a: màn xem chi tiết một phiên bản và chế độ chỉ đọc ROLE-005",
+      "goal": "Hiển thị nội dung, hạn mức, lịch sử trạng thái, banner theo trạng thái và người xem.",
+      "specs": [
+        "INC_RATE_VERSION_DETAIL_SPEC §4.1 (C..F, H xem), §5 (Initializing xem, E-6), §6 'Hiển thị theo trạng thái', 'Phân quyền theo role'"
+      ],
+      "dod": [
+        "Mở màn: proxy xử lý hết phiên (M_COM_004, M_COM_005), tài khoản bị khóa (M_PAU_002), role không được phép (về trang chủ, M_COM_006), phiên aal1 (bước TOTP, M_COM_019, xong quay lại URL cũ) (ROLE-005 và ROLE-006); mở chi tiết gọi song song SYS_ME và INC_RULE_VERSION_GET; NOT_FOUND thì banner M_COM_007 (phiên bản), ẩn E đến H và G, chỉ còn nút về danh sách",
+        "Hiển thị E-1..E-7 (loại, mã, tỷ lệ phần trăm hai chữ số, ngày hiệu lực kèm 'đến ngày trước superseded_at', lý do, liên kết bản nguồn khi rollback), khối H tham số 業務規程 chỉ đọc, F-1, F-2, F-4 'Đã duyệt năm used / 4', F-5 lịch sử trạng thái (lập, duyệt hoặc từ chối kèm lý do, kích hoạt hoặc hủy kèm lý do, hết hiệu lực); nội dung bất biến, không có ô sửa",
+        "F-3 kiểm người duyệt khác người lập (✔ hoặc ✖ ở bản chờ duyệt, chữ tĩnh ở trạng thái khác); D-1 theo bảng trạng thái (người lập chờ ROLE-006 khác; ROLE-006 khác có thể duyệt hoặc từ chối; scheduled sẽ tự kích hoạt đầu ngày hiệu lực; superseded gợi ý rollback là tạo phiên bản mới)",
+        "ROLE-005 ẩn toàn bộ khối G (G-1..G-8) và F-3, không bao giờ mở dialog I hoặc J, và bị đưa về /rule-versions với M_COM_006 khi mở /rule-versions/new; Lỗi dùng chung: MFA_REQUIRED (bước TOTP, M_COM_019, xong quay lại), SESSION_EXPIRED hoặc UNAUTHENTICATED (M_COM_005, M_COM_004), FORBIDDEN (M_COM_006 rồi về trang chủ), mất mạng hoặc timeout (M_COM_003), 503 (M_COM_002), 500 hoặc mã lạ (M_COM_001 kèm requestId); màn bắt buộc online; không tự làm mới định kỳ"
+      ],
+      "depends": [
+        "E06-BE-09",
+        "E10-SYS-01",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01"
+      ],
+      "parent": "E06-FE-03"
+    },
+    {
+      "key": "E06-FE-03b",
+      "type": "fe",
+      "special": "業務規程 có phiên bản",
+      "title": "S-030b: form tạo phiên bản và tạo rollback",
+      "goal": "Tạo phiên bản tỷ lệ hoặc 業務規程 và tạo bản rollback từ bản đã áp dụng.",
+      "specs": [
+        "INC_RATE_VERSION_DETAIL_SPEC §4.1 (E-1..E-7, H-1..H-5, G-4, G-5, I), §4.2, §5 (E-1, E-3, E-4, G-5, G-4, G-7, I-4, I-5, Error CREATE)",
+        "FR-INC-002 AC1, AC5",
+        "Q25 (đã chốt), Q30 (xem E06-CLR-02)"
+      ],
+      "dod": [
+        "Mở /rule-versions/new?kind=: form trống, E-1 theo kind (sai thì incentive_rate), chỉ gọi SYS_ME; mở ?rollbackOf={id}: gọi INC_RULE_VERSION_GET, điền sẵn và khóa loại, tỷ lệ hoặc params, E-6; ngày hiệu lực và lý do luôn nhập mới",
+        "Đổi loại (không rollback): incentive_rate hiện E-3, E-7 và ẩn H; market_rule ngược lại; giá trị khối bị ẩn bị xóa; E-3 tỷ lệ phần trăm 0 đến 100 tối đa hai chữ số thập phân (M_COM_009 khi rỗng, M_INC_011 ngoài khoảng hoặc quá hai chữ số), gửi chuỗi '1.50'; E-7 ví dụ áp công thức chỉ khi E-3 hợp lệ",
+        "E-4 ngày hiệu lực chỉ sau hôm nay JST (M_COM_009 khi rỗng, M_COM_013 khi không sau hôm nay), nhập DD/MM/YYYY, gửi ISO; E-5 lý do 1 đến 500 ký tự trim (M_COM_009, M_COM_010) kèm đếm ký tự; khối H: H-2 điều kiện gỡ 条件付き (mỗi dòng mã | nhãn, mã không trùng, ít nhất 1), H-3 lịch 休市日 (ngày không trùng), H-4 N ngày 締め再開 (số nguyên ít nhất 1, M_COM_011), H-5 参加上限 mặc định (số nguyên không âm, M_COM_024); phạm vi các khóa H theo quyết định ở E06-CLR-02",
+        "G-5 Gửi phê duyệt: kiểm §4.2 trước (lỗi thì M_COM_008 kèm inline, focus ô lỗi đầu tiên, không gọi API); hợp lệ thì khóa G-4, G-5 kèm spinner, gọi INC_RULE_VERSION_CREATE; thành công thì toast M_INC_007 kèm version_code, chuyển /rule-versions/{id mới} bằng replace (người lập thấy G-8); G-4 hoặc quay lại khi có dữ liệu thì hỏi M_COM_020",
+        "Lỗi: VALIDATION thì M_COM_008 và mã theo fields dưới từng ô (M_COM_009, M_COM_010, M_COM_013, M_INC_011, M_COM_024), bật lại nút; INVALID_STATE khi rollback từ bản chưa áp dụng thì banner M_INC_003 và giữ dữ liệu; NOT_FOUND bản rollback thì M_COM_007 và giữ dữ liệu; MFA_REQUIRED thì mất dữ liệu form (không lưu nháp); dialog rollback I (M_INC_004, so sánh đang hiệu lực với bản mới, nút mở form tạo, Esc đóng); không kiểm trùng ngày hiệu lực ở client",
+        "F-4 (hạn mức năm) ẩn ở chế độ tạo; chuyển menu, đăng xuất hoặc đổi ngôn ngữ khi form có dữ liệu thì hỏi M_COM_020; H-5 chấp nhận ô trống nghĩa là không có mặc định theo quyết định ở E06-DOC-01b (không đổi thành 0)"
+      ],
+      "depends": [
+        "E06-FE-03a",
+        "E06-BE-06"
+      ],
+      "parent": "E06-FE-03"
+    },
+    {
+      "key": "E06-FE-03c",
+      "type": "fe",
+      "special": "hai người (người yêu cầu khác người duyệt)",
+      "title": "S-030c: duyệt, từ chối, hủy phiên bản và dialog đủ hạn mức",
+      "goal": "Thao tác G-1..G-3, G-6, G-7 và dialog J.",
+      "specs": [
+        "INC_RATE_VERSION_DETAIL_SPEC §4.1 (G-1..G-8, J), §5 (G-3, G-2, G-6, G-7, J-4, Error E1, E14, E15, E2, E3), §6 A2, A3",
+        "FR-INC-002 AC2, AC4, AC5"
+      ],
+      "dod": [
+        "Bản pending_approval với người xem khác người lập: G-1 ghi 'Lý do từ chối', G-2 Từ chối, G-3 Phê duyệt (không khóa khi đủ hạn mức, server quyết, không có hộp xác nhận, OQ-6 còn mở); với người lập: ẩn hẳn G-1..G-3, hiện G-8 'chờ ROLE-006 khác duyệt'; bản scheduled: G-1 'Lý do hủy' và G-6 Hủy phiên bản cho mọi ROLE-006 kể cả người lập; bản superseded: G-7 Rollback mở dialog I",
+        "G-3 khóa G-1..G-3 kèm spinner, gọi APPROVE, toast M_INC_008 kèm version_code và ngày hiệu lực (DD/MM/YYYY), tải lại thành scheduled, F-4 thêm 1; G-2 với lý do rỗng sau trim thì M_COM_009 ('Lý do từ chối') ngay ở G-1, focus, không gọi API, thành công thì toast M_INC_009; G-6 tương tự với 'Lý do hủy', toast M_INC_010",
+        "Lỗi duyệt: RULE_CHANGE_LIMIT_REACHED thì mở dialog J (M_INC_001 kèm năm, bảng các lần duyệt trong năm từ cũ tới mới; đóng thì tải lại, vẫn pending_approval); VALIDATION fields.effectiveFrom thì banner M_INC_014 kèm ngày, giữ G-2 để từ chối bản này; CONFLICT thì banner M_INC_015 kèm version_code của bản chờ kích hoạt và ngày, tải lại; SELF_APPROVAL_FORBIDDEN thì banner M_INC_002, tải lại (ẩn G-1..G-3, hiện G-8)",
+        "INVALID_STATE thì banner M_INC_003 kèm trạng thái mới và hành động (phê duyệt, từ chối, hủy) rồi tải lại; NOT_FOUND thì M_COM_007; BAD_REQUEST hoặc UNSUPPORTED_MEDIA_TYPE thì M_COM_018; lỗi dùng chung như E06-FE-03a; không tự kiểm hạn mức hay người lập ở client (chỉ ẩn nút theo created_by)",
+        "Lý do ở G-1 (từ chối và hủy): trim, 1 đến 500 ký tự (rỗng thì M_COM_009 với tên Lý do từ chối hoặc Lý do hủy, quá 500 thì M_COM_010), không gọi API khi sai; lỗi VALIDATION của server (fields.reason) hiện inline dưới G-1 cho reject và cancel, bật lại nút, giữ nội dung để sửa và gửi lại",
+        "CONFLICT thiếu params (từ lưới chỉ mục duy nhất): không hiển thị chỗ trống hay undefined, dùng message thay thế hoặc tải lại để lấy bản scheduled cùng kind và ngày theo quyết định ở E06-DOC-01b"
+      ],
+      "depends": [
+        "E06-FE-03a",
+        "E06-BE-07",
+        "E06-BE-08",
+        "E06-BE-11"
+      ],
+      "parent": "E06-FE-03"
+    },
+    {
+      "key": "E06-FE-04",
+      "type": "fe",
+      "special": "完納奨励金 delta",
+      "title": "S-031 INC_POST_LOCK_DELTA: chênh lệch điều chỉnh sau khóa sổ",
+      "goal": "Màn chỉ đọc của ROLE-005 về bút toán sau khóa của ngày đang mở và delta thưởng; 4 trạng thái (normal, rate-missing, empty, day-locked).",
+      "specs": [
+        "INC_POST_LOCK_DELTA_SPEC (4 trạng thái)",
+        "FR-INC-003 AC1..AC4",
+        "Q47, Q56 (đã chốt)"
+      ],
+      "dod": [
+        "Mở màn: proxy xử lý hết phiên (M_COM_004, M_COM_005), tài khoản bị khóa (M_PAU_002), role không được phép (về trang chủ, M_COM_006), phiên aal1 (bước TOTP, M_COM_019, xong quay lại URL cũ); aal2 thì skeleton, gọi song song SYS_ME và INC_DELTA_LIST (không có tham số ngày, không nhận dayId từ URL); day rỗng (hôm nay chưa có dòng business_days) thì C-4 là ngày hôm nay 'đang mở', E bằng 0, F-7",
+        "C-4 chip ngày ghi sổ không chọn được (đang mở, 🔒 đã khóa kèm lần khóa, đã mở lại, chờ 締め再開; DD/MM/YYYY); C-5 liên kết sang /reconciliation?dayId=; D-1 nhiều banner cùng lúc: (a) chữ tĩnh quy tắc delta dùng tỷ lệ gốc khi ngày chưa khóa, (b) M_INC_006 kèm tối đa 3 mã giao dịch thiếu tỷ lệ và 'và n GD khác' khi rate_missing lớn hơn 0, (c) ngày đã khóa thì danh sách chỉ xem lịch sử",
+        "Năm thẻ E: số bút toán sau khóa, tổng chênh lệch tiền có dấu, tổng delta thưởng có dấu (thêm * khi E-5 lớn hơn 0), gốc không đúng hạn, thiếu tỷ lệ gốc (viền cảnh báo); khối F mỗi bút toán: đầu khối (mã giao dịch, ngày gốc kèm 🔒, chip 差額記録 hoặc 逆仕訳, liên kết 'Yêu cầu ADJ-NNNNNN' mở tab mới), bảng trước, sau, chênh lệch của số lượng, đơn giá, thành tiền, người duyệt và giờ",
+        "F-3 theo incentive.status: computed (tỷ lệ gốc, đúng hạn gốc ✔, phép tính, delta có dấu), not_timely (đúng hạn gốc ✖, delta 0 円), rate_missing (cảnh báo không xác định tỷ lệ gốc), deferred (chữ tĩnh chờ job bù); F-5 'Hiển thị a / b', F-6 Tải thêm 20 khối, F-7 rỗng 'Chưa có chênh lệch sau khóa nào ghi vào ngày …'; tải lại sau thời điểm 締め thì C-4 🔒 và D-1 (c)",
+        "Lỗi: VALIDATION (cursor hỏng) thì bỏ cursor, tải lại trang đầu, banner M_COM_008; Lỗi dùng chung: MFA_REQUIRED (bước TOTP, M_COM_019, xong quay lại), SESSION_EXPIRED hoặc UNAUTHENTICATED (M_COM_005, M_COM_004), FORBIDDEN (M_COM_006 rồi về trang chủ), mất mạng hoặc timeout (M_COM_003), 503 (M_COM_002), 500 hoặc mã lạ (M_COM_001 kèm requestId); màn bắt buộc online; không tự làm mới định kỳ; NO_OPEN_BUSINESS_DAY và DAY_LOCKED không phát sinh ở màn này",
+        "Thẻ E-5 và banner M_INC_006 chỉ tính các bút toán rate_missing, không tính deferred; ngày toàn deferred thì không hiện M_INC_006 và E-5 bằng 0, F-3 hiện chữ tĩnh chờ job bù"
+      ],
+      "depends": [
+        "E06-BE-05",
+        "E10-SYS-01",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01"
+      ]
+    },
+    {
+      "key": "E06-QA-01",
+      "type": "qa",
+      "special": "完納奨励金 (tỷ lệ có phiên bản)",
+      "title": "QA đầu cuối: tính 完納奨励金 khi khóa ngày, thiếu tỷ lệ, chạy lại, khóa lại",
+      "goal": "Kiểm thử luồng tính thưởng từ trình duyệt thật và PostgreSQL.",
+      "specs": [
+        "FR-INC-001",
+        "INC_INCENTIVE_CALCULATE_TECH test case gợi ý",
+        "ADR-003 R8"
+      ],
+      "dod": [
+        "Công thức: 3 giao dịch (完納 trước khóa, sau khóa, ngoại lệ) cho incentive_jpy theo công thức, 0 và 0, cùng rule_version_id; base 10000,5 với tỷ lệ 1,25% cho floor(10000,5 nhân 0,0125 nhân 1,1) bằng 137 (floor numeric chính xác); bút toán trước khóa thì base là giá trị sau điều chỉnh; 逆仕訳 thì incentive_jpy 0; giao dịch confirmed_at muộn hơn locked_at bị loại",
+        "Phiên bản: bản A hiệu lực đến D-1, bản B từ D: ngày D-1 dùng A dù job chạy sau khi B kích hoạt; không có tỷ lệ thì 0 dòng, một alert, một audit skipped, incentive_runs rate_missing; tạo tỷ lệ rồi chạy lại thì succeeded, không thêm alert; gọi lại job thì already_done",
+        "Trạng thái chạy: chưa có dòng thì S-028 pending; ngày khóa hợp lệ không có giao dịch thì API calc_status là computed (không pending, không inherited) và UI hiện M_COM_021; khóa lại lần #2 thì inherited chỉ khi rows_written bằng 0 và rows_skipped lớn hơn 0; chưa có dòng thì S-028 pending",
+        "Lỗi và khôi phục: job exception khi còn lượt thì dòng vẫn running trong lúc retry_wait; hết 3 lần lỗi thì incentive_runs failed kèm finished_at và error_code, outbox failed, ops_alerts job_failed và S-028 hiện failed; sau khi khắc phục, chạy lại từ failed thì succeeded, không nhân original hay delta, đúng một audit incentive.rerun actor ROLE-005; chạy lại khi succeeded hoặc khi chưa có dòng incentive_runs thì INVALID_STATE, không tạo dữ liệu thưởng",
+        "Ma trận dòng treo: running chưa quá 5 phút thì LIST vẫn running, run.stale không true, chạy lại bị chặn; running quá 5 phút mà outbox còn retry_wait thì chưa stale, chạy lại bị chặn; running quá 5 phút mà outbox không còn retry_wait thì LIST trả failed kèm run.stale true và chạy lại được phép",
+        "Quyền của rpc_incentive_rerun: aal1 thì MFA_REQUIRED, role khác ROLE-005 ở aal2 thì FORBIDDEN (khác với ca anon và authenticated gọi hàm worker bị từ chối quyền execute ở dòng bên dưới)",
+        "Mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả; chạy kèm E05-QA-01 (chốt sổ phát sự kiện) và E07 (completed_at)",
+        "Số dòng audit, action và actor đúng từng đường: job thành công một dòng incentive.calculate actor system; job thiếu tỷ lệ một dòng incentive.calculate_skipped; chạy lại thủ công một dòng incentive.rerun actor ROLE-005, không thêm dòng nào khác",
+        "Quyền hiệu dụng: authenticated và anon gọi trực tiếp worker_incentive_run_begin, worker_incentive_run_fail, job_incentive_calculate đều bị từ chối (kể cả grant qua PUBLIC)"
+      ],
+      "depends": [
+        "E06-BE-01c",
+        "E06-BE-02",
+        "E06-FE-01c",
+        "E05-BE-03",
+        "E07-BE-03"
+      ]
+    },
+    {
+      "key": "E06-QA-02",
+      "type": "qa",
+      "special": "業務規程 có phiên bản",
+      "title": "QA đầu cuối: vòng đời phiên bản, hai người duyệt, hạn mức 4 lần mỗi năm, kích hoạt",
+      "goal": "Kiểm thử tạo, duyệt, từ chối, hủy, rollback và kích hoạt phiên bản.",
+      "specs": [
+        "FR-INC-002",
+        "INC_RULE_VERSIONING_TECH test case gợi ý",
+        "ADR-003"
+      ],
+      "dod": [
+        "Tạo: effective_from là hôm nay thì VALIDATION, ngày mai thì pending_approval với version_code đúng mẫu; người lập tự duyệt hoặc từ chối thì SELF_APPROVAL_FORBIDDEN; ROLE-006 khác duyệt thì scheduled; duyệt khi effective_from đã qua thì VALIDATION fields.effectiveFrom; duyệt bản trùng kind và ngày với bản scheduled thì CONFLICT; reject thiếu lý do thì VALIDATION; cancel bản pending_approval thì INVALID_STATE",
+        "Hạn mức: duyệt lần thứ 5 trong năm thì RULE_CHANGE_LIMIT_REACHED kèm năm; bản scheduled bị hủy sau duyệt vẫn tính; hai lần duyệt song song ở lần thứ 4 thì đúng một thành công; phạm vi đếm theo quyết định ở E06-CLR-02",
+        "Rollback: từ bản superseded thì nội dung chép đúng và bỏ qua tỷ lệ client gửi; từ bản rejected hoặc chưa áp dụng thì INVALID_STATE; kích hoạt: bản scheduled ngày D thì 00:05 ngày D thành active, bản cũ superseded, một outbox khi incentive_rate, không có khi market_rule; lỡ 3 ngày với 2 bản đến hạn thì bản mới nhất active; chạy lại job không đổi; active_rule_version đúng cho ngày quá khứ và khi job chưa chạy",
+        "Quyền: aal1 thì MFA_REQUIRED, ROLE-005 chỉ đọc (POST thì FORBIDDEN, màn ẩn nút); UPDATE trực tiếp incentive_rate bị rule_versions_guard chặn; mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả",
+        "Lý do reject và cancel: rỗng, đúng 500 ký tự, 501 ký tự đều được kiểm ở UI (M_COM_009, M_COM_010) và ở server (VALIDATION fields.reason); sau lỗi giữ nội dung và gửi lại được",
+        "Quyền hiệu dụng: authenticated và anon gọi trực tiếp job_rule_version_activate bị từ chối",
+        "CONFLICT từ precheck có đủ params và CONFLICT từ lưới chỉ mục thiếu params đều hiển thị đúng, không có chỗ trống"
+      ],
+      "depends": [
+        "E06-FE-03c",
+        "E06-BE-10",
+        "E06-FE-02"
+      ]
+    },
+    {
+      "key": "E06-QA-03",
+      "type": "qa",
+      "special": "完納奨励金 (tỷ lệ có phiên bản)",
+      "title": "QA đồng thời: job thưởng đua duyệt điều chỉnh và chạy lại, đua duyệt phiên bản",
+      "goal": "Kiểm thử hai phiên trên PostgreSQL cho khóa advisory incentive và khóa hạn mức.",
+      "specs": [
+        "INC_INCENTIVE_CALCULATE_TECH §4.2 bước 1a, §5 (đồng thời)",
+        "INC_POST_LOCK_DELTA_TECH §4.1..§4.3, §5",
+        "INC_RULE_VERSIONING_TECH §5 (đồng thời)",
+        "INC_DB (Khóa ngầm của FK, H1)"
+      ],
+      "dod": [
+        "Hai lời gọi song song cùng lock_id thì đúng một bộ dòng; chạy lại đua với chạy lại theo ma trận kết quả lần đầu: succeeded thì lần sau INVALID_STATE, vẫn rate_missing thì lần sau có thể 200 rate_missing và alert không trùng, exception thì lần sau xét trạng thái đã rollback; job đua với rpc_adjustment_decide cùng giao dịch hai thứ tự thì đúng một delta",
+        "H1 hai phiên: phiên A rpc_adjustment_decide giữ trades FOR NO KEY UPDATE chưa tới advisory, phiên J chạy job tới COMMIT không chờ A, không 40P01; ca âm tính: trades FOR UPDATE thì deadlock (xác nhận lý do bắt buộc dùng FOR NO KEY UPDATE)",
+        "Ca biên H3: duyệt bắt đầu trước giờ khóa nhưng giữ khóa ngày sau khi rpc_day_close commit thì bút toán có created_at muộn hơn locked_at, original không gồm bút toán và có một delta bù, job chạy trước hay sau duyệt đều cùng kết quả; duyệt lấy FOR SHARE ngày gốc trước chốt thì created_at sớm hơn locked_at, base gồm bút toán, không có delta; hai bút toán một giao dịch thì lấy mới nhất theo id",
+        "Duyệt phiên bản: hai ROLE-006 duyệt song song một bản thì đúng một thành công; duyệt đua với từ chối thì bên sau INVALID_STATE (pending_approval không còn); duyệt đua với hủy theo thứ tự: hủy chạy trước khi bản còn pending_approval thì hủy INVALID_STATE (hủy chỉ cho scheduled) và duyệt có thể thành công; duyệt chạy trước thì bản scheduled tương lai nên hủy sau đó hợp lệ (cả hai thành công, bản cancelled, lượt duyệt vẫn tính theo Q59); ngày hiệu lực đã đến hạn thì hủy INVALID_STATE; hủy đua với job kích hoạt ngày hiệu lực thì không có bản vừa active vừa cancelled; hai bản trùng kind và ngày thì một scheduled một CONFLICT; mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả"
+      ],
+      "depends": [
+        "E06-BE-01c",
+        "E06-BE-02",
+        "E06-BE-04",
+        "E06-BE-07",
+        "E06-BE-10",
+        "E04-BE-03",
+        "E06-BE-11",
+        "E06-BE-08"
+      ]
+    },
+    {
+      "key": "E06-QA-04",
+      "type": "qa",
+      "special": "完納奨励金 delta",
+      "title": "QA tích hợp: delta 完納奨励金 khi duyệt điều chỉnh sau khóa",
+      "goal": "Kiểm thử nhánh delta end to end với E-04 và màn S-031.",
+      "specs": [
+        "FR-INC-003",
+        "INC_POST_LOCK_DELTA_TECH test case gợi ý",
+        "ADR-006 R6",
+        "Q14, Q33, Q56 (đã chốt)"
+      ],
+      "dod": [
+        "Giao dịch đúng hạn có original, duyệt correction sau khóa: một dòng delta gắn ngày ghi sổ, dùng phiên bản tỷ lệ của original (không dùng bản hiện hành sau khi tỷ lệ đã đổi), incentive_jpy bằng floor(sau) trừ floor(trước), tổng original cộng mọi delta bằng tính lại từ đầu trên giá trị cuối kể cả delta âm; reversal thì tổng thưởng về 0",
+        "Original không đúng hạn: vẫn một dòng delta 0 với is_timely false; ngày gốc chưa từng khóa hoặc ngày gốc reopened chưa có original thì không có delta (reopened đã có original thì vẫn có delta); thiếu tỷ lệ gốc thì ops_alerts rate_version_unknown, không có delta, bút toán vẫn ghi, S-031 hiện M_INC_006; job chưa chạy thì deferred rồi job bù đúng một delta",
+        "S-031 hiển thị đủ bốn trạng thái computed, not_timely, rate_missing, deferred và tổng E-1..E-5; response duyệt và audit adjustment.approve có phần thưởng đúng hợp đồng; duyệt đua với job không deadlock (cùng E06-QA-03); mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả",
+        "Ngày chỉ có bút toán deferred: summary.rate_missing bằng 0, không có banner M_INC_006, S-031 hiện chữ chờ job bù; ngày trộn đủ bốn status: các thẻ E-1..E-5 và danh sách khớp nhau",
+        "Giao dịch xác nhận sau lần khóa gần nhất trong lúc ngày reopened rồi bút toán được duyệt: trạng thái đúng theo quyết định ở E06-DOC-01a, không gán nhầm rate_missing"
+      ],
+      "depends": [
+        "E06-BE-04",
+        "E06-FE-04",
+        "E04-BE-03d"
+      ]
+    },
+    {
+      "key": "E06-CLR-01",
+      "type": "clarify",
+      "title": "Làm rõ: phạm vi của Q45 (hiển thị dòng thưởng 0 ở báo cáo và S-028)",
+      "goal": "Q45 hỏi báo cáo có cần hiện dòng thưởng 0 cho giao dịch chưa 完納; câu trả lời \"không hiện, chỉ liệt kê giao dịch đủ điều kiện\" cần thu hẹp vào phạm vi hiển thị, còn việc lưu dòng original bằng 0 vẫn theo TECH và INC_DB trừ khi có quyết định mới.",
+      "specs": [
+        "REQ-001 §8 Q45 (resolved, chờ khách xác nhận), Q56",
+        "INC_INCENTIVE_CALCULATE_TECH §4.4 bước 6",
+        "INC_DB §4.1, Câu hỏi mở Q45",
+        "INC_CALCULATION_RESULT_SPEC (E-3, G-1, G-8, Q45 còn open)",
+        "INC_POST_LOCK_DELTA_TECH §4.4 bước 3"
+      ],
+      "dod": [
+        "Có quyết định chấp nhận về phạm vi hiển thị: báo cáo (RPT) không hiện dòng 0; S-028 (thẻ E-3, chip lọc Không đúng hạn, cột G-8) hiện hay ẩn dòng không đúng hạn; ghi vào PREMISE",
+        "Dữ liệu lưu giữ baseline hiện tại: job ghi dòng original bằng 0 cho giao dịch không đúng hạn (INC_INCENTIVE_CALCULATE_TECH §4.4 bước 6, INC_DB §4.1) vì Q56 (đã chốt) cần dòng original để ghi delta 0; chỉ khi có quyết định mới đổi lưu trữ thì mở lại và khai phụ thuộc cho E06-DOC-01a, E06-DB-01, E06-BE-01b, E06-BE-04 cùng các luồng đọc",
+        "Báo lại E06-FE-01b, E06-QA-01 và E-09 (báo cáo) về phạm vi hiển thị; không tự đổi hành vi ghi dòng khi chưa có quyết định"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E06-CLR-02",
+      "type": "clarify",
+      "title": "Làm rõ: tham số vận hành 休市日 và N ngày 締め再開 có tách khỏi hạn mức 4 lần mỗi năm không (Q30)",
+      "goal": "REQ-001 tự mâu thuẫn: FR-INC-002 AC6 và Q17 để lịch 休市日 là tham số market_rule do ROLE-006 lập và duyệt (tiêu lượt), còn Q30 trả lời tách tham số vận hành khỏi hạn mức; spec thiết kế vẫn đếm chung. Cần xác nhận quy tắc cuối.",
+      "specs": [
+        "REQ-001 §8 Q30 (resolved, chờ khách xác nhận), Q15, Q17",
+        "INC_RULE_VERSIONING_TECH §5 (Câu hỏi mở Q30), §4.4",
+        "INC_RATE_VERSION_DETAIL_SPEC H-3, H-4, A3",
+        "ADR-003 R3, R6",
+        "CORE_DB (rule_versions, params)"
+      ],
+      "dod": [
+        "Có quyết định chấp nhận: tách hai khóa vận hành khỏi phiên bản market_rule (bảng hoặc loại phiên bản riêng, người lập và duyệt, audit) hay giữ trong params nhưng không đếm vào hạn mức; ghi vào PREMISE (mục Sửa) và nêu nơi dùng của E-05 (reopen_window_days) và E-10 (market_holidays, Q57)",
+        "Nếu tách: định nghĩa vòng đời của tham số vận hành (ai lập, ai duyệt, có hai người không, có hiệu lực theo ngày không) vì Q17 nói ROLE-006 lập và duyệt như mọi tham số market_rule",
+        "Báo lại E06-DOC-01b, E06-BE-06, E06-BE-07, E06-FE-03b, E06-QA-02, E05-BE-04 và E10 (CORE_DB params); không tự đổi cách đếm hạn mức khi chưa có quyết định",
+        "Ghi cả hai quyết định đối nghịch trong REQ-001 (AC6, Q17 và Q30), không chọn bên nào chỉ vì \"mới hơn\"; quyết định cuối được xác nhận trước khi chốt DoD của issue chịu ảnh hưởng"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E06-BE-11",
+      "type": "be",
+      "special": "hai người (người yêu cầu khác người duyệt)",
+      "title": "INC_RULE_VERSION_CANCEL: rpc_rule_version_cancel (hủy phiên bản chờ hiệu lực)",
+      "goal": "Hủy bản chờ hiệu lực bởi một ROLE-006 bất kỳ (kể cả người lập), bắt buộc lý do.",
+      "specs": [
+        "FR-INC-002 AC5",
+        "INC_RULE_VERSIONING_TECH §4.5",
+        "api-list INC_RULE_VERSION_CANCEL",
+        "DQ-6"
+      ],
+      "dod": [
+        "Route: 401, 403, MFA_REQUIRED, 415, 400; reason rỗng sau trim hoặc quá 500 ký tự thì VALIDATION kèm fields.reason; RPC kiểm aal2 trước has_role; khóa hàng FOR UPDATE; không có thì NOT_FOUND",
+        "Chỉ khi status là scheduled và effective_from sau hôm nay JST (đã hoặc sắp kích hoạt thì INVALID_STATE, M_INC_003 kèm params [status, cancel]); một ROLE-006 bất kỳ kể cả người lập; thành công thì cancelled kèm cancel_reason, cancelled_by, cancelled_at (cancel_reason chỉ ghi một lần cùng lúc chuyển trạng thái, rule_versions_guard); lượt đã tính vẫn không trả lại (Q59); write_audit rule_version.cancel (khóa cuối); response gồm ok, id, status",
+        "Hủy đua với job kích hoạt ngày hiệu lực: không có bản vừa active vừa cancelled (job khóa hàng, hủy chặn khi effective_from đến hạn)"
+      ],
+      "depends": [
+        "E06-BE-06",
+        "E06-DOC-01b",
+        "E10-AUD-02",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06"
+      ]
+    }
+  ]
+}

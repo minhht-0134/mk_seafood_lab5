@@ -1,0 +1,952 @@
+{
+  "epic": {
+    "key": "E-03",
+    "title": "E-03 Giao dịch (trading)",
+    "goal": "Tạo giao dịch 相対取引, ghi kết quả せり, chốt hoặc từ chối hoặc hủy giao dịch, kiểm 参加上限 khi tạo và khi chốt (tự từ chối khi chốt), và tra cứu lịch sử せり.",
+    "specs": [
+      "FR-TRD-001..007",
+      "design/trading",
+      "TRD_DB",
+      "ADR-013",
+      "ADR-004 R7"
+    ],
+    "out_of_scope": [
+      "Sửa giao dịch đã chốt bằng 差額記録 hoặc 逆仕訳 (E-04)",
+      "Công khai lot và xác nhận số lượng (E-02)",
+      "Đặt hoặc đổi 参加上限 trên hồ sơ participant (E-01)",
+      "Chốt sổ ngày và đối soát (E-05)",
+      "Trigger trades_guard_locked_day và component S-024 (E-04)",
+      "OCR hoặc nhận dạng ký hiệu せり, せり thời gian thực"
+    ]
+  },
+  "issues": [
+    {
+      "key": "E03-DOC-01",
+      "type": "doc",
+      "parent_of": [
+        "E03-DOC-01a",
+        "E03-DOC-01b",
+        "E03-DOC-01c"
+      ],
+      "title": "Soạn API Design (BM-2-901-52) cho nhóm API trading",
+      "goal": "Soạn API Design cho 9 API trading và hợp đồng hàm participation_used_jpy, chia 3 sub-issue.",
+      "specs": [
+        "api-list §2.4 TRD",
+        "api-design/_index (L5)",
+        "BM-2-901-52",
+        "PREMISE (mục Thêm: API Design)"
+      ],
+      "dod": [
+        "Hoàn thành khi 3 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E03-DOC-01a",
+      "type": "doc",
+      "title": "API Design: tạo giao dịch, ghi kết quả せり và mức 参加上限 đã dùng (3 API, 1 hàm)",
+      "goal": "TRD_CREATE, TRD_AUCTION_RECORD, TRD_LIMIT_USAGE_GET và hợp đồng hàm participation_used_jpy.",
+      "specs": [
+        "api-list TRD_CREATE, TRD_AUCTION_RECORD, TRD_LIMIT_USAGE_GET",
+        "TRD_NEGOTIATED_CREATE_TECH §4.4 #3, §4.6",
+        "TRD_AUCTION_RECORD_TECH §4.5",
+        "ADR-013 R2, R3, R7"
+      ],
+      "dod": [
+        "Mỗi API một file {API_ID}_API.md theo mẫu BM-2-901-52: request, response, quyền, mã lỗi, link SPEC và TECH liên quan",
+        "Chốt khóa response (hai API tạo đang khác dạng: TRD_CREATE trả id, trade_code, status, qty, lot; TRD_AUCTION_RECORD trả trade_code, remaining) và dạng response replay (200 kèm replayed) vì TECH ghi chốt ở LAB-5 (DQ-4)",
+        "Hợp đồng participation_used_jpy: tên, tham số, hai chế độ gọi (khi tạo: pending và confirmed; khi chốt: chỉ confirmed khác, bỏ giao dịch đang chốt), cộng tổng amount_delta của ngày ghi sổ, không làm tròn, không thuế; thống nhất với response TRD_LIMIT_USAGE_GET (used_pending_jpy, used_confirmed_jpy, used_adjustment_jpy, used_jpy)",
+        "Ghi chỗ lệch: PROFILE_FORM A5 và TRD_AUCTION_RESULT_RECORD A3 mô tả mức đã dùng chỉ pending và confirmed, trong khi TECH và api-list có thêm điều chỉnh (xem chỗ hở)",
+        "Khớp api-list và TECH; chỗ lệch ghi vào bảng chỗ hở"
+      ],
+      "depends": [],
+      "parent": "E03-DOC-01"
+    },
+    {
+      "key": "E03-DOC-01b",
+      "type": "doc",
+      "title": "API Design: chốt, từ chối tay và hủy giao dịch (3 API)",
+      "goal": "TRD_CONFIRM, TRD_REJECT, TRD_CANCEL.",
+      "specs": [
+        "api-list TRD_CONFIRM, TRD_REJECT, TRD_CANCEL",
+        "TRD_CONFIRM_TECH §4.1, §4.7",
+        "TRD_CONFIRMATION_LIST_SPEC",
+        "TRD_CANCELLATION_SPEC"
+      ],
+      "dod": [
+        "Mỗi API một file {API_ID}_API.md theo mẫu BM-2-901-52: request, response, quyền, mã lỗi, link SPEC và TECH liên quan",
+        "Response TRD_CONFIRM (ok, trade_code, status, reject_code, restored_qty, lot) kèm params [used_jpy, value_jpy, limit_jpy] khi reject_code là participation_limit; response reject và cancel",
+        "Chốt kiểu khóa hàng trades cho các RPC đổi trạng thái: TRD_CONFIRM_TECH ghi FOR UPDATE, còn TRD_DB, ADR-013 R5 và ADJ_LOCKED_DAY_GUARD_TECH ghi FOR NO KEY UPDATE (xem chỗ hở); đồng bộ hợp đồng khóa với E-04",
+        "Ghi rõ TRD_REJECT chỉ cho 相対取引 (Q69), TRD_CANCEL dùng chung hai loại, ROLE-005 chỉ có GET (không gọi được ba API này)",
+        "Khớp api-list và TECH; chỗ lệch ghi vào bảng chỗ hở"
+      ],
+      "depends": [],
+      "parent": "E03-DOC-01"
+    },
+    {
+      "key": "E03-DOC-01c",
+      "type": "doc",
+      "title": "API Design: danh sách, chi tiết và lịch sử せり (3 API)",
+      "goal": "TRD_LIST, TRD_GET, TRD_AUCTION_HISTORY.",
+      "specs": [
+        "api-list TRD_LIST, TRD_GET, TRD_AUCTION_HISTORY",
+        "TRD_AUCTION_HISTORY_SPEC",
+        "TRD_CONFIRMATION_LIST_SPEC A7"
+      ],
+      "dod": [
+        "Mỗi API một file {API_ID}_API.md theo mẫu BM-2-901-52: request, response, quyền, mã lỗi, link SPEC và TECH liên quan",
+        "TRD_LIST: tham số (status, type, businessDate, q, withCount, limit, cursor), 7 khóa của S-016, khóa buyer theo role (ROLE-003 thêm basis_type và basis_no, ROLE-005 để null)",
+        "TRD_AUCTION_HISTORY: chốt phạm vi sự kiện (có gộp adjustment.approve, không gồm guard.write_blocked) và LOT_SEARCH khớp chính xác hay một phần (OQ-2, OQ-3, OQ-5 của S-021 còn mở)",
+        "Khớp api-list; chỗ lệch ghi vào bảng chỗ hở"
+      ],
+      "depends": [],
+      "parent": "E03-DOC-01"
+    },
+    {
+      "key": "E03-DB-01",
+      "type": "db",
+      "special": "số dư chung (BP-b)",
+      "title": "Migration trades: bảng giao dịch, ràng buộc và chỉ mục",
+      "goal": "Tạo bảng trades cho cả 相対取引 và せり với ràng buộc trạng thái, lý do, khóa chống gửi lặp.",
+      "specs": [
+        "TRD_DB §2, §4.1, RLS",
+        "ADR-013",
+        "FR-TRD-001..005"
+      ],
+      "dod": [
+        "22 cột theo TRD_DB §4.1; trade_type chỉ nhận negotiated hoặc auction; qty > 0 (NUMERIC 12,3), unit_price > 0 (INTEGER, tối đa 2.147.483.647); trạng thái chỉ pending, confirmed, rejected, cancelled, mặc định pending",
+        "CHECK reject_code chỉ nhận manual, participant_ineligible, participation_limit; CHECK (status là rejected) khớp (reject_code khác rỗng); reject_reason bắt buộc khi rejected, cancel_reason bắt buộc khi cancelled, cả hai tối đa 500 ký tự",
+        "Sequence trade_code_seq (mã TX-NNNNNN) duy nhất trade_code; sáu chỉ mục theo TRD_DB (gồm buyer, ngày, trạng thái cho 参加上限, và duy nhất một phần theo (created_by, idempotency_key) khi khóa không rỗng); tám khóa ngoại",
+        "RLS bật, chỉ SELECT: ROLE-003, 004, 005; không ghi trực tiếp bằng client; thu quyền truncate và delete khỏi service_role trên trades (giữ từ prototype)",
+        "Trigger trades_guard_locked_day thuộc E04-ADJ-LOCKED-DAY-GUARD: bảo vệ bất biến qty, unit_price, buyer_id, lot_id, business_day_id, trade_type khi đã confirmed; issue này không tạo trigger",
+        "Migration chạy được trên DB trống và DB có dữ liệu seed"
+      ],
+      "depends": [
+        "E02-DB-01",
+        "E01-DB-01",
+        "E01-DB-02",
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05"
+      ]
+    },
+    {
+      "key": "E03-BE-01",
+      "type": "be",
+      "special": "参加上限 (khi tạo và khi chốt)",
+      "title": "Hàm participation_used_jpy: mức 参加上限 đã dùng",
+      "goal": "Hàm dùng chung cho tạo, chốt và API xem mức đã dùng, một công thức duy nhất.",
+      "specs": [
+        "ADR-013 R2, R3, R4, R7",
+        "TRD_NEGOTIATED_CREATE_TECH §4.4 #3",
+        "TRD_CONFIRM_TECH §4.4 #2",
+        "TRD_DB (hàm participation_used_jpy)",
+        "Q18, Q70 (đã chốt)"
+      ],
+      "dod": [
+        "Khi gọi từ lúc tạo: tổng qty nhân unit_price của giao dịch pending và confirmed của bên mua trong ngày; khi gọi từ lúc chốt: chỉ confirmed khác (loại giao dịch đang chốt, không tính pending), theo business_day_id của giao dịch",
+        "Cộng tổng amount_delta của 差額記録 có business_day_id là ngày ghi sổ, thuộc giao dịch của đúng bên mua (Q18: có tính)",
+        "Dùng numeric, không làm tròn, không thuế (Q70: trước thuế); dùng chỉ mục buyer, ngày, trạng thái",
+        "Kiểm thử bảng ca: không có giao dịch, chỉ pending, pending cộng confirmed, có điều chỉnh dương, có điều chỉnh âm, giao dịch đang chốt bị loại",
+        "Hàm stable, đọc không khóa; không có dòng nào thì tổng bằng 0; chỉ cộng amount_delta từ trade_adjustment_entries, không đọc trade_effective_values để cộng điều chỉnh lần nữa",
+        "Kiểm thử thêm: điều chỉnh dương ghi vào ngày trước không cộng vào ngày đang tính; điều chỉnh âm ghi vào ngày đang tính làm giảm đúng bằng giá trị đó; tổng 99,9 cộng giao dịch 0,2 bằng 100,1 (không làm tròn)"
+      ],
+      "depends": [
+        "E03-DB-01",
+        "E03-DOC-01a",
+        "E04-DB-02",
+        "E04-DB-03"
+      ]
+    },
+    {
+      "key": "E03-BE-02",
+      "type": "be",
+      "special": "参加上限 và số dư chung (BP-b)",
+      "parent_of": [
+        "E03-BE-02a",
+        "E03-BE-02b",
+        "E03-BE-02c"
+      ],
+      "title": "TRD_CREATE: rpc_trade_create (tạo giao dịch 相対取引)",
+      "goal": "Một RPC, một transaction: khóa lot rồi participant rồi ngày, kiểm bên mua và 参加上限, giữ chỗ, chèn giao dịch; chia 3 sub-issue.",
+      "specs": [
+        "FR-TRD-001",
+        "FR-TRD-007 AC1, AC4, AC5",
+        "TRD_NEGOTIATED_CREATE_TECH §4.1..§4.6"
+      ],
+      "dod": [
+        "Hoàn thành khi 3 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E03-BE-02a",
+      "type": "be",
+      "special": "số dư chung (BP-b)",
+      "title": "rpc_trade_create: route, khóa theo thứ tự và idempotency",
+      "goal": "Kiểm đầu vào, khóa lot rồi participant, xử lý khóa chống gửi lặp.",
+      "specs": [
+        "TRD_NEGOTIATED_CREATE_TECH §4.1, §4.2",
+        "api-list §1 (Idempotency)",
+        "TRD_DB (idempotency_key)"
+      ],
+      "dod": [
+        "Proxy: không có phiên hoặc quá 30 phút thì 401; không phải ROLE-003 thì 403; Content-Type sai thì 415, body không phải object thì 400; không cần aal2; không kết nối được Auth hoặc DB thì 503",
+        "Route kiểm: lotId, buyerId là số nguyên dương; qty là chuỗi thập phân > 0, tối đa 3 số lẻ, nhỏ hơn 1.000.000.000; unitPrice là số nguyên từ 1 đến 2.147.483.647 (cột trades.unit_price là INTEGER; TECH §4.1 chưa nêu trần, xem chỗ hở), vượt thì VALIDATION, không để lỗi ép kiểu DB ra 500; thiếu hoặc sai thì VALIDATION kèm fields; header Idempotency-Key có nhưng không phải UUID thì 400 BAD_REQUEST (M_COM_018); không gửi header thì chạy như cũ (không chống trùng, header không bắt buộc)",
+        "RPC kiểm lại has_role ROLE-003 (không audit khi FORBIDDEN), tham số null hoặc ngoài miền thì VALIDATION, không có lot hoặc participant thì NOT_FOUND",
+        "Khóa lots FOR UPDATE, kiểm khóa chống gửi lặp sau khi đã khóa lot, rồi khóa participants FOR UPDATE cho mọi nhóm bên mua",
+        "Cùng người tạo và cùng Idempotency-Key với cùng payload: trả 200 replayed true của giao dịch đã có, không audit, không kiểm lại; khác payload: CONFLICT 409 (M_COM_029), không audit; hai lần gửi cùng khóa và cùng lot nối đuôi nhau qua khóa lot (khóa lot khác nhau thì không nối đuôi, xem E03-BE-02c)",
+        "Từ chối nghiệp vụ trả object, không raise, để dòng audit chặn kịp commit"
+      ],
+      "depends": [
+        "E03-DB-01",
+        "E03-DOC-01a",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05"
+      ],
+      "parent": "E03-BE-02"
+    },
+    {
+      "key": "E03-BE-02b",
+      "type": "be",
+      "special": "参加上限 (khi tạo và khi chốt)",
+      "title": "rpc_trade_create: kiểm ngày, lot, bên mua và 参加上限 khi tạo",
+      "goal": "Các điều kiện chặn trước khi giữ chỗ.",
+      "specs": [
+        "TRD_NEGOTIATED_CREATE_TECH §4.3, §4.4",
+        "FR-TRD-001 AC1..AC3",
+        "FR-TRD-007 AC1, AC4, AC7",
+        "ADR-013 R3, R5, R8",
+        "Q2, Q18, Q70, Q85 (đã chốt)"
+      ],
+      "dod": [
+        "Ngày nghiệp vụ luôn là current_business_day (request không có tham số ngày); lock_day_open lấy FOR SHARE sau khi khóa lot và participant; ngày locked hoặc reopen_requested thì ghi audit guard.write_blocked và trả DAY_LOCKED với params [business_date, status]; ngày reopened chỉ nhận khi là hôm nay",
+        "Lot không ở trạng thái public thì INVALID_STATE (M_TRD_007), không audit",
+        "Kiểm bên mua bằng check_participant_for_action với negotiated_buy: nhóm không thuộc 仲卸 hoặc 売買参加者 thì PARTICIPANT_GROUP_NOT_ALLOWED (M_TRD_001, kiểm nhóm trước trạng thái); không hữu hiệu (kể cả đang 再審査) thì PARTICIPANT_INEFFECTIVE với params [trạng thái hiệu dụng] (M_TRD_002), giữ nguyên giá trị như expired hoặc not_yet_effective khi cột status còn valid, không đổi về status lưu trong bảng",
+        "Chỉ 売買参加者 bị kiểm hạn mức: dùng participation_used_jpy; đã dùng cộng giá trị mới lớn hơn hạn mức thì ghi audit guard.write_blocked (đối tượng participant) và trả PARTICIPATION_LIMIT_EXCEEDED với params [tên, đã dùng, giá trị, hạn mức] (M_TRD_004), không giữ chỗ",
+        "Hạn mức chưa đặt thì bỏ qua kiểm (Q2: không giới hạn), nhánh PARTICIPATION_LIMIT_NOT_SET không triển khai; 仲卸 không bị kiểm hạn mức",
+        "Kiểm thử ngày reopened: hôm nay mở lại nhận giao dịch mới, ngày reopened cũ không nhận"
+      ],
+      "depends": [
+        "E03-BE-02a",
+        "E03-BE-01",
+        "E01-BE-02",
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05",
+        "E10-AUD-02"
+      ],
+      "parent": "E03-BE-02"
+    },
+    {
+      "key": "E03-BE-02c",
+      "type": "be",
+      "special": "số dư chung (BP-b)",
+      "title": "rpc_trade_create: giữ chỗ, chèn giao dịch, audit và response",
+      "goal": "Ghi giao dịch pending, giảm số dư lot, dựng response.",
+      "specs": [
+        "TRD_NEGOTIATED_CREATE_TECH §4.5, §4.6",
+        "FR-TRD-001 AC4, AC5",
+        "ADR-003 R8"
+      ],
+      "dod": [
+        "Gọi lot_reserve_qty; thiếu số dư thì INSUFFICIENT_QUANTITY với params [lot_code, available_qty] (M_TRD_003), không audit; lot vẫn public sau khi giữ chỗ",
+        "Chèn trades: trade_code TX-NNNNNN, trade_type negotiated, status pending, business_day_id là ngày hiện tại, created_by, rule_version_id là bản market_rule đang active, idempotency_key",
+        "Audit trade.create kèm balance_before, balance_after, used_jpy_before, khóa audit lấy cuối cùng; không phát outbox",
+        "Lỗi bất ngờ rollback toàn bộ: vi phạm duy nhất (created_by, idempotency_key) lúc INSERT (ví dụ cùng người và cùng khóa nhưng lot khác nên không nối đuôi qua khóa lot) thì rollback phần giữ chỗ của request thua và trả 409 CONFLICT, chỉ bắt đúng vi phạm UQ này, không đổi mọi lỗi 23505 hay mọi CHECK thành CONFLICT; trigger raise hint DAY_LOCKED thì 409 DAY_LOCKED; còn lại 500 INTERNAL_ERROR kèm log ERROR và pgCode",
+        "Response 201 gồm id, trade_code, status pending, qty, lot (available_qty, status); replay 200 cùng body kèm replayed; lỗi trả code, params, fields, requestId; một dòng log api",
+        "Đo p95 không quá 2 giây gồm kiểm hiệu lực và giữ chỗ (FR-TRD-001 AC5), ghi điều kiện đo"
+      ],
+      "depends": [
+        "E03-BE-02b",
+        "E02-BE-08",
+        "E10-AUD-02",
+        "E04-DB-04"
+      ],
+      "parent": "E03-BE-02"
+    },
+    {
+      "key": "E03-BE-03",
+      "type": "be",
+      "special": "参加上限 và số dư chung (BP-b)",
+      "title": "TRD_AUCTION_RECORD: rpc_trade_record (ghi kết quả せり)",
+      "goal": "Ghi một kết quả せり (một người thắng, một dòng trades), dùng chung số dư với 相対取引.",
+      "specs": [
+        "FR-TRD-004",
+        "FR-TRD-007 AC1",
+        "TRD_AUCTION_RECORD_TECH §4.1..§4.5",
+        "BP-b"
+      ],
+      "dod": [
+        "lotId nằm ở path (không phải số nguyên dương thì 422 không kèm fields); các kiểm route, role, idempotency, khóa và ngày giống E03-BE-02a, E03-BE-02b (gồm trần unitPrice 2.147.483.647 và ánh xạ vi phạm UQ idempotency thành CONFLICT); ngày nghiệp vụ luôn là ngày hiện tại; không cần aal2",
+        "Người thắng kiểm bằng check_participant_for_action với auction_win: hợp lệ cho 仲卸, 売買参加者 và 買出人; 卸売業者 thì PARTICIPANT_GROUP_NOT_ALLOWED (M_TRD_001); không hữu hiệu thì PARTICIPANT_INEFFECTIVE (M_TRD_002)",
+        "Chỉ 売買参加者 bị kiểm 参加上限 khi tạo (pending cộng confirmed cộng điều chỉnh); 仲卸 và 買出人 không bị kiểm; vượt thì không ghi được và ghi audit guard.write_blocked",
+        "Giữ chỗ trên cùng số dư với 相対取引: thiếu số dư thì INSUFFICIENT_QUANTITY (M_TRD_003)",
+        "Chèn trades với trade_type auction, trạng thái pending; audit auction.record kèm balance_before, balance_after (nguồn dữ liệu của lịch sử せり F-015); không OCR, không nhận dạng ký hiệu; không phát outbox",
+        "Response 201 gồm trade_code, remaining; replay 200 kèm replayed; dạng response chốt ở E03-DOC-01a"
+      ],
+      "depends": [
+        "E03-BE-02c",
+        "E03-DOC-01a",
+        "E01-BE-02"
+      ]
+    },
+    {
+      "key": "E03-BE-04",
+      "type": "be",
+      "special": "参加上限 và số dư chung (BP-b)",
+      "parent_of": [
+        "E03-BE-04a",
+        "E03-BE-04b",
+        "E03-BE-04c"
+      ],
+      "title": "TRD_CONFIRM: rpc_trade_confirm (chốt giao dịch và tự từ chối)",
+      "goal": "Một RPC cho chốt cả hai loại giao dịch, kiểm lại bên mua và 参加上限 với hạn mức hiện hành; chia 3 sub-issue.",
+      "specs": [
+        "FR-TRD-002",
+        "FR-TRD-005",
+        "FR-TRD-007 AC2, AC3",
+        "TRD_CONFIRM_TECH §4.2..§4.5, §4.7"
+      ],
+      "dod": [
+        "Hoàn thành khi 3 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E03-BE-04a",
+      "type": "be",
+      "title": "rpc_trade_confirm: route, khóa theo thứ tự và kiểm trạng thái, ngày",
+      "goal": "Chỉ giao dịch pending được chốt, kiểm theo ngày của giao dịch.",
+      "specs": [
+        "TRD_CONFIRM_TECH §4.1, §4.2, §4.3",
+        "FR-TRD-002 AC4",
+        "ADR-015"
+      ],
+      "dod": [
+        "Proxy: 401 khi không có phiên hoặc hết phiên; 403 khi không phải ROLE-003 (ROLE-005 chỉ có GET); id không phải số nguyên dương thì VALIDATION; không cần aal2",
+        "RPC kiểm lại has_role ROLE-003; không có giao dịch thì NOT_FOUND; đọc lot_id và buyer_id không khóa rồi khóa lots, participants, trades theo thứ tự (kiểu khóa trades chốt ở E03-DOC-01b: TECH ghi FOR UPDATE, TRD_DB và ADR-013 ghi FOR NO KEY UPDATE)",
+        "Kiểm trạng thái sau khi giữ khóa giao dịch: khác pending (người khác vừa chốt, hủy hoặc tự từ chối) thì INVALID_STATE (M_TRD_008), không audit; trả object, không raise",
+        "Kiểm ngày của giao dịch (business_day_id, không phải ngày hiện tại): lock_day_open FOR SHARE; false thì audit guard.write_blocked và DAY_LOCKED với params [business_date, status]; pending của ngày cũ chưa khóa vẫn chốt được",
+        "Chốt, từ chối và hủy không được dùng để thêm giao dịch mới"
+      ],
+      "depends": [
+        "E03-DB-01",
+        "E03-DOC-01b",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05",
+        "E10-AUD-02"
+      ],
+      "parent": "E03-BE-04"
+    },
+    {
+      "key": "E03-BE-04b",
+      "type": "be",
+      "special": "参加上限 (khi tạo và khi chốt)",
+      "title": "rpc_trade_confirm: kiểm lại bên mua và 参加上限 (R4), quyết định kết quả",
+      "goal": "Quyết định chốt hay tự từ chối theo thứ tự tư cách rồi hạn mức.",
+      "specs": [
+        "TRD_CONFIRM_TECH §4.4",
+        "FR-TRD-002 AC1, AC2",
+        "FR-TRD-005 AC1, AC2",
+        "FR-TRD-007 AC2, AC3",
+        "ADR-013 R4, R6"
+      ],
+      "dod": [
+        "p_action theo trade_type: negotiated thì negotiated_buy, auction thì auction_win; check_participant_for_action kiểm nhóm trước trạng thái (kể cả 再審査, căn cứ quá hạn); không đạt thì rejected với reject_code participant_ineligible (M_TRD_011); chỉ ghi một reject_code",
+        "Chỉ 売買参加者: đã dùng là tổng confirmed khác (không tính pending) trong business_day_id của giao dịch cộng điều chỉnh, cộng giá trị giao dịch này; lớn hơn hạn mức hiện hành (đọc từ dòng participants đang khóa) thì rejected với reject_code participation_limit, response kèm params [used_jpy, value_jpy, limit_jpy] (M_TRD_012)",
+        "Hạn mức chưa đặt thì bỏ qua (Q2); 仲卸 và 買出人 không bị kiểm hạn mức",
+        "reject_reason do hệ thống sinh (trạng thái bên mua, hoặc đã dùng, giá trị, hạn mức); giá trị so sánh không làm tròn",
+        "Kiểm thử: hạn mức bị hạ giữa ngày có hiệu lực ngay; bên mua bị tạm dừng sau khi tạo; chốt giao dịch của ngày cũ tính theo ngày của giao dịch"
+      ],
+      "depends": [
+        "E03-BE-04a",
+        "E03-BE-01",
+        "E01-BE-02"
+      ],
+      "parent": "E03-BE-04"
+    },
+    {
+      "key": "E03-BE-04c",
+      "type": "be",
+      "special": "số dư chung (BP-b)",
+      "title": "rpc_trade_confirm: ghi kết quả, tạo giao hàng, trạng thái lot, audit và response",
+      "goal": "Ghi kết quả đã quyết định ở E03-BE-04b trong cùng transaction.",
+      "specs": [
+        "TRD_CONFIRM_TECH §4.5, §4.7",
+        "FR-TRD-002 AC5",
+        "FR-DLV-001",
+        "Q36 (xem chỗ hở)"
+      ],
+      "dod": [
+        "Đạt: trades chuyển confirmed (confirmed_by, confirmed_at) và chèn một dòng deliveries trạng thái waiting (không lưu số lượng cần giao); vi phạm khóa duy nhất deliveries thì rollback",
+        "Tự từ chối: trades chuyển rejected với reject_code, reject_reason, rejected_at, rejected_by rỗng (hệ thống); gọi lot_release_qty hoàn đúng qty; không tạo deliveries",
+        "Cả hai nhánh gọi lot_refresh_status; lot sold khi số dư 0 và hết pending; việc lot sold quay về public khi hoàn theo Q36 là hành vi của E02-BE-09, issue này chỉ gọi helper",
+        "Audit trade.confirm hoặc trade.reject_auto (tiền tố auction cho せり) kèm lot_status_before, lot_status_after, balance_before, balance_after, delivery_id, used_jpy, limit_jpy; tự từ chối do hạn mức luôn có audit; không phát outbox",
+        "Lỗi bất ngờ rollback toàn bộ; hint DAY_LOCKED thì 409, còn lại 500 kèm pgCode",
+        "Response 200 gồm ok, trade_code, status, reject_code, restored_qty, lot (available_qty, status); log api theo msg trade.confirm ok, auto_rejected hoặc rejected"
+      ],
+      "depends": [
+        "E03-BE-04b",
+        "E02-BE-08",
+        "E02-BE-09",
+        "E07-DB-01",
+        "E10-AUD-02",
+        "E04-DB-04"
+      ],
+      "parent": "E03-BE-04"
+    },
+    {
+      "key": "E03-BE-05",
+      "type": "be",
+      "special": "số dư chung (BP-b)",
+      "title": "TRD_REJECT: rpc_trade_reject (từ chối tay giao dịch 相対取引)",
+      "goal": "ROLE-003 từ chối thủ công một giao dịch 相対取引 đang chờ chốt, hoàn toàn bộ số lượng.",
+      "specs": [
+        "FR-TRD-002 AC3",
+        "TRD_CONFIRM_TECH §4.6",
+        "Q69 (đã chốt)"
+      ],
+      "dod": [
+        "Route: không có phiên hoặc hết phiên thì 401; không phải ROLE-003 thì 403 (ROLE-005 chỉ có GET); Content-Type sai thì 415, body không phải object thì 400; id không phải số nguyên dương, hoặc reason sau trim rỗng hoặc quá 500 ký tự thì VALIDATION (M_COM_009, M_COM_010)",
+        "Lý do bắt buộc: trim rỗng hoặc quá 500 ký tự thì VALIDATION (M_COM_009, M_COM_010); has_role ROLE-003; không có giao dịch thì NOT_FOUND",
+        "Giao dịch せり thì INVALID_STATE (từ chối tay chỉ cho 相対取引, せり dùng hủy); trạng thái khác pending thì INVALID_STATE (M_TRD_008); ngày bị khóa thì audit guard.write_blocked và DAY_LOCKED",
+        "Khóa lots rồi trades (kiểu khóa chốt ở E03-DOC-01b) rồi ngày FOR SHARE (không khóa participant); ghi rejected với reject_code manual, reject_reason, rejected_by, rejected_at",
+        "Gọi lot_release_qty rồi lot_refresh_status; audit trade.reject; giao dịch rời pending thì thôi tính vào mức đã dùng 参加上限; không phát outbox",
+        "Response 200 gồm trade_code, status rejected, lot (available_qty)"
+      ],
+      "depends": [
+        "E03-DB-01",
+        "E03-DOC-01b",
+        "E02-BE-08",
+        "E02-BE-09",
+        "E10-AUD-02",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E04-DB-04"
+      ]
+    },
+    {
+      "key": "E03-BE-06",
+      "type": "be",
+      "special": "số dư chung (BP-b)",
+      "title": "TRD_CANCEL: rpc_trade_cancel (hủy giao dịch chờ chốt, cả hai loại)",
+      "goal": "Hủy giao dịch pending kèm lý do, hoàn toàn bộ số lượng giữ chỗ.",
+      "specs": [
+        "FR-TRD-003",
+        "TRD_CONFIRM_TECH §4.6",
+        "TRD_CANCELLATION_SPEC A1..A4"
+      ],
+      "dod": [
+        "Route: không có phiên hoặc hết phiên thì 401; không phải ROLE-003 thì 403 (ROLE-005 chỉ có GET); Content-Type sai thì 415, body không phải object thì 400; id không phải số nguyên dương, hoặc reason sau trim rỗng hoặc quá 500 ký tự thì VALIDATION (M_COM_009, M_COM_010)",
+        "Lý do bắt buộc (trim rỗng hoặc quá 500 ký tự thì VALIDATION); has_role ROLE-003; không có giao dịch thì NOT_FOUND",
+        "Giao dịch đã confirmed thì TRADE_ALREADY_CONFIRMED (M_TRD_010, hướng dẫn sang yêu cầu điều chỉnh); rejected hoặc cancelled thì INVALID_STATE (M_TRD_008); ngày bị khóa thì audit guard.write_blocked và DAY_LOCKED",
+        "Khóa lots rồi trades (kiểu khóa chốt ở E03-DOC-01b) rồi ngày FOR SHARE; ghi cancelled với cancel_reason, cancelled_by, cancelled_at; gọi lot_release_qty rồi lot_refresh_status",
+        "Audit trade.cancel hoặc auction.cancel theo trade_type; lot còn giao dịch pending khác thì không bao giờ sold; giao dịch hủy thôi tính vào mức đã dùng 参加上限",
+        "Response 200 gồm trade_code, status cancelled, qty, lot (lot_code, available_qty, status)"
+      ],
+      "depends": [
+        "E03-DB-01",
+        "E03-DOC-01b",
+        "E02-BE-08",
+        "E02-BE-09",
+        "E10-AUD-02",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E04-DB-04"
+      ]
+    },
+    {
+      "key": "E03-BE-07",
+      "type": "be",
+      "special": "参加上限 (khi tạo và khi chốt)",
+      "title": "TRD_LIMIT_USAGE_GET: xem mức 参加上限 đã dùng của một bên mua",
+      "goal": "API đọc cho màn tạo, ghi kết quả, chốt và hồ sơ participant.",
+      "specs": [
+        "FR-TRD-007",
+        "FR-PAU-008",
+        "api-list TRD_LIMIT_USAGE_GET",
+        "ADR-013 R7, R8"
+      ],
+      "dod": [
+        "Query participantId và businessDayId (tùy chọn, mặc định ngày nghiệp vụ hiện tại, dùng cho giao dịch ngày cũ chưa khóa)",
+        "Trả business_day_id, business_date, limit_jpy (rỗng nghĩa là chưa đặt), used_pending_jpy, used_confirmed_jpy, used_adjustment_jpy, used_jpy (tổng ba số trước), tính bằng participation_used_jpy",
+        "Không phải 売買参加者 thì VALIDATION; không có participant thì NOT_FOUND",
+        "Quyền: ROLE-003 và ROLE-005 (chỉ đọc); ROLE-005 kiểm aal2 trước role (MFA_REQUIRED trước FORBIDDEN)"
+      ],
+      "depends": [
+        "E03-BE-01",
+        "E03-DOC-01a",
+        "E01-BE-06",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01"
+      ]
+    },
+    {
+      "key": "E03-BE-08",
+      "type": "be",
+      "title": "TRD_LIST và TRD_GET: danh sách và chi tiết giao dịch",
+      "goal": "Đọc giao dịch cho các màn chốt, hủy và điều chỉnh; ROLE-005 chỉ đọc.",
+      "specs": [
+        "FR-TRD-002",
+        "FR-TRD-003",
+        "TRD_CONFIRMATION_LIST_SPEC A1, A7, A9",
+        "api-list TRD_LIST, TRD_GET"
+      ],
+      "dod": [
+        "TRD_LIST: lọc status, type, businessDate (bỏ trống ở pending nghĩa là mọi ngày chưa khóa), q (mã giao dịch, mã lot, bên mua), withCount, limit, cursor; trả total khi withCount",
+        "Mỗi mục có trade_code, trade_type, status, qty, unit_price, created_at, created_by_name, business_day, lot, buyer, rule_version, reject_code, reject_reason, rejected_by_name (rỗng khi tự từ chối), rejected_at",
+        "buyer: ROLE-003 đọc participants và căn cứ is_current, thêm basis_type, basis_no; ROLE-005 đọc participants_brief, hai khóa này rỗng",
+        "TRD_GET trả giao dịch kèm giá trị hiệu lực (qty_effective, unit_price_effective, amount_effective, adjustment_count), lot, buyer, ngày; không có thì NOT_FOUND; quyền ROLE-003, 004, 005",
+        "Quyền: TRD_LIST chỉ ROLE-003 và ROLE-005, TRD_GET ROLE-003, 004, 005 (ROLE-004 gọi TRD_LIST bị từ chối); ROLE-005 kiểm aal2 trước role (MFA_REQUIRED trước FORBIDDEN) và chỉ đọc, không gọi được các API ghi (TRD_CREATE, TRD_AUCTION_RECORD, TRD_CONFIRM, TRD_REJECT, TRD_CANCEL)",
+        "TRD_LIST trả items[].id (các màn dùng id cho thao tác) và phân trang keyset theo cursor; tham số sai thì VALIDATION"
+      ],
+      "depends": [
+        "E03-DB-01",
+        "E03-DOC-01c",
+        "E01-BE-01",
+        "E01-BE-06",
+        "E04-DB-02",
+        "E04-DB-03",
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05"
+      ]
+    },
+    {
+      "key": "E03-BE-09",
+      "type": "be",
+      "special": "せり (BP-b)",
+      "title": "TRD_AUCTION_HISTORY: lịch sử せり theo lot (đọc từ nhật ký kiểm toán)",
+      "goal": "Tra toàn bộ sự kiện せり của một lot, chỉ đọc.",
+      "specs": [
+        "FR-TRD-006",
+        "TRD_AUCTION_HISTORY_SPEC A1..A5",
+        "Q (S-021 OQ-2, OQ-3 còn mở)"
+      ],
+      "dod": [
+        "Đọc audit_logs theo thứ tự chain_seq tăng dần (không theo id): sự kiện mức lot liên quan せり (lot.quantity_confirm), mọi sự kiện auction.* của giao dịch loại auction thuộc lot, và adjustment.approve của các giao dịch đó; vì nhật ký điều chỉnh có đối tượng là yêu cầu điều chỉnh nên phải nối qua trade_adjustment_requests.trade_id",
+        "Không gồm trade.* (相対取引) và không gồm guard.write_blocked (giả định theo S-021 A1; OQ-3 còn mở)",
+        "Nhiều giao dịch せり của một lot hiện chung, phân biệt theo trade_code; lot chưa có せり thì danh sách rỗng; lot không tồn tại thì NOT_FOUND",
+        "Chỉ đọc: không có API ghi; giá trị trước và sau lấy từ before, after của nhật ký, không tính lại từ trades",
+        "Chỉ ROLE-005 và kiểm aal2 trước role",
+        "Nghiệm thu bằng một nhật ký adjustment.approve thực hoặc fixture (không chỉ liệt kê tên hành động); OQ-2, OQ-3, OQ-5 của S-021 còn mở, giả định theo A1"
+      ],
+      "depends": [
+        "E03-DB-01",
+        "E03-DOC-01c",
+        "E02-BE-03",
+        "E04-BE-03",
+        "E10-AUD-02",
+        "E01-BE-06",
+        "E04-DB-02",
+        "E04-DB-03"
+      ]
+    },
+    {
+      "key": "E03-FE-01",
+      "type": "fe",
+      "special": "số dư chung (BP-b)",
+      "title": "S-014 TRD_NEGOTIATED_LOT_LIST: lot công khai để tạo 相対取引",
+      "goal": "Danh sách lot công khai còn số dư cho ROLE-003, 3 trạng thái theo spec.",
+      "specs": [
+        "TRD_NEGOTIATED_LOT_LIST_SPEC (3 trạng thái: normal, day-locked, empty)",
+        "FR-TRD-001"
+      ],
+      "dod": [
+        "Hiển thị lot public có số dư lớn hơn 0, sắp received_at tăng rồi id; ô tìm (D-1): trim, tối đa 30 ký tự (ô không nhận thêm), khớp một phần không phân biệt hoa thường với mã lot hoặc tên hàng (có chữ Nhật và Việt), không lọc ký tự ở client (chỗ hở: api-list ghi q là mã lot); D-2 mặt hàng chỉ chọn trong danh sách (lấy từ các dòng đã tải cộng Tất cả vì chưa có danh mục, OQ-2), khớp bằng tuyệt đối",
+        "Số liệu là ảnh chụp, không tự làm mới (nút làm mới); tổng chỉ đếm ở lần tải đầu và khi đổi bộ lọc (withCount), tải thêm không đếm lại",
+        "Ngày hiện tại locked hoặc reopen_requested (trạng thái day-locked): banner báo sớm M_COM_016, khóa nút tạo giao dịch, danh sách vẫn xem được; ngày reopened coi như open",
+        "Trạng thái empty khi không có lot khớp bộ lọc; phím: Enter tạo giao dịch cho dòng đang chọn, dấu / focus ô tìm; ngày giờ DD/MM/YYYY HH:mm giờ JST",
+        "Lot đã sold được hoàn số lượng và quay về public hiện lại ở danh sách (theo Q36, xem chỗ hở)"
+      ],
+      "depends": [
+        "E02-BE-06",
+        "E10-SYS-01",
+        "E04-FE-03",
+        "E02-DOC-01b"
+      ]
+    },
+    {
+      "key": "E03-FE-02",
+      "type": "fe",
+      "special": "参加上限 và số dư chung (BP-b)",
+      "parent_of": [
+        "E03-FE-02a",
+        "E03-FE-02b"
+      ],
+      "title": "S-015 TRD_NEGOTIATED_CREATE: tạo giao dịch 相対取引",
+      "goal": "Form tạo giao dịch, 7 trạng thái theo spec, chia 2 sub-issue.",
+      "specs": [
+        "TRD_NEGOTIATED_CREATE_SPEC (7 trạng thái: normal, buyer-search, licensed-buyer, limit-exceeded, validation-error, created, day-locked)",
+        "FR-TRD-001",
+        "FR-TRD-007"
+      ],
+      "dod": [
+        "Hoàn thành khi 2 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E03-FE-02a",
+      "type": "fe",
+      "special": "số dư chung (BP-b)",
+      "title": "S-015a: form, tìm bên mua, validation và khóa chống gửi lặp",
+      "goal": "Form nhập số lượng, đơn giá và chọn bên mua (trạng thái normal, buyer-search, validation-error, created).",
+      "specs": [
+        "TRD_NEGOTIATED_CREATE_SPEC A1, A2, A10, A12, §4.2",
+        "FR-TRD-001 AC1..AC3"
+      ],
+      "dod": [
+        "Mở màn: gọi song song SYS_ME và LOT_AVAILABLE_GET; ngày khóa thì banner H-1 và form khóa; lot không còn public thì banner M_TRD_007 và form khóa; số dư bằng 0 thì M_TRD_003 (số dư 0) và form khóa; bình thường thì focus ô bên mua và sinh Idempotency-Key mới",
+        "Ô bên mua: gõ từ khóa 1 đến 30 ký tự, gọi PAU_PARTICIPANT_LIST (eligible=negotiated) sau 300 ms và hủy request cũ khi có phím mới; gợi ý tối đa 10 dòng kèm nhóm, căn cứ, trạng thái, cảnh báo sắp hết hạn; chữ gõ mà không chọn gợi ý coi như chưa chọn; không kết quả hiển thị M_COM_021",
+        "Số lượng gửi dạng chuỗi (lớn hơn 0, tối đa 3 số lẻ, nhỏ hơn 1.000.000.000, không vượt số dư D-5: vượt thì M_TRD_003 ở client trước khi gửi, RPC vẫn kiểm lại dưới khóa); đơn giá chỉ nhận chữ số, số nguyên từ 1 đến 2.147.483.647; lỗi hiện inline bằng cùng mã message với server, focus ô lỗi đầu",
+        "Idempotency-Key: sinh UUID khi mở form, sau mỗi lần tạo thành công và khi sửa nội dung sau lỗi; giữ nguyên khi thử lại sau mất mạng hoặc timeout; 200 replayed được hiển thị như thành công",
+        "Lỗi server: PARTICIPANT_INEFFECTIVE (bên mua bị tạm dừng sau khi chọn, M_TRD_002), PARTICIPANT_GROUP_NOT_ALLOWED (M_TRD_001), INSUFFICIENT_QUANTITY (M_TRD_003 rồi tải lại số dư), INVALID_STATE (M_TRD_007), CONFLICT (hộp thoại M_COM_029, sinh khóa mới), NOT_FOUND, mất mạng (M_COM_003, giữ nội dung và khóa)",
+        "Tạo thành công (trạng thái created): M_TRD_014; nếu lot.available_qty bằng 0 thì chuyển S-014 giữ toast; ngược lại form về trống, số dư cập nhật, focus về ô bên mua; mất mạng hoặc 503 thì giữ form và khóa, không đưa vào hàng đợi offline (giao dịch bắt buộc online); dùng được hoàn toàn bằng bàn phím"
+      ],
+      "depends": [
+        "E03-BE-02c",
+        "E02-BE-06",
+        "E01-BE-10",
+        "E10-SYS-01"
+      ],
+      "parent": "E03-FE-02"
+    },
+    {
+      "key": "E03-FE-02b",
+      "type": "fe",
+      "special": "参加上限 (khi tạo và khi chốt)",
+      "title": "S-015b: khối 参加上限 và ngày bị khóa",
+      "goal": "Hiển thị mức đã dùng và còn lại cho 売買参加者, xử lý ngày khóa (trạng thái licensed-buyer, limit-exceeded, day-locked).",
+      "specs": [
+        "TRD_NEGOTIATED_CREATE_SPEC A3, A5, G-1..G-7, H-1",
+        "FR-TRD-007"
+      ],
+      "dod": [
+        "Chọn bên mua là 売買参加者 thì gọi TRD_LIMIT_USAGE_GET và hiện khối hạn mức: hạn mức, đã dùng (used_jpy kèm chi tiết, thêm dòng điều chỉnh khi khác 0), giá trị giao dịch này, còn lại sau giao dịch (âm hiển thị đỏ); 仲卸 thì ẩn khối; hạn mức chưa đặt thì ẩn hạn mức",
+        "Còn hạn mức hiển thị M_TRD_006; làm vượt hạn mức hiển thị M_TRD_004 và vô hiệu nút tạo (trạng thái limit-exceeded); server trả PARTICIPATION_LIMIT_EXCEEDED thì hiển thị theo params và gọi lại TRD_LIMIT_USAGE_GET",
+        "Banner báo sớm M_COM_016 khi ngày hiện tại locked hoặc reopen_requested (trạng thái day-locked), khóa mọi ô; phản hồi DAY_LOCKED từ API mở component S-024 với M_ADJ_010, M_ADJ_011 cho reopened, kèm M_ADJ_013, không có nút yêu cầu điều chỉnh",
+        "Giá trị giao dịch hiển thị làm tròn xuống JPY nguyên (Q26) nhưng so hạn mức không làm tròn"
+      ],
+      "depends": [
+        "E03-FE-02a",
+        "E03-BE-07",
+        "E04-FE-03"
+      ],
+      "parent": "E03-FE-02"
+    },
+    {
+      "key": "E03-FE-03",
+      "type": "fe",
+      "special": "参加上限 và số dư chung (BP-b)",
+      "parent_of": [
+        "E03-FE-03a",
+        "E03-FE-03b",
+        "E03-FE-03c"
+      ],
+      "title": "S-016 TRD_CONFIRMATION_LIST: chốt và từ chối giao dịch 相対取引",
+      "goal": "Màn chốt cho ROLE-003 và xem cho ROLE-005, 6 trạng thái theo spec, chia 3 sub-issue.",
+      "specs": [
+        "TRD_CONFIRMATION_LIST_SPEC (6 trạng thái: normal, licensed-check, reject-modal, auto-rejected, rejected-tab, day-locked)",
+        "FR-TRD-002",
+        "FR-TRD-007"
+      ],
+      "dod": [
+        "Hoàn thành khi 3 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E03-FE-03a",
+      "type": "fe",
+      "title": "S-016a: danh sách, tab, bộ lọc và chế độ chỉ đọc của ROLE-005",
+      "goal": "Hai tab chờ chốt và đã từ chối hôm nay (trạng thái normal, rejected-tab, day-locked).",
+      "specs": [
+        "TRD_CONFIRMATION_LIST_SPEC A1, A7, A8, A9",
+        "api-list TRD_LIST, CLS_DAY_LIST"
+      ],
+      "dod": [
+        "Ba tab (D-1): Chờ chốt (mặc định), Đã chốt hôm nay, Đã từ chối hôm nay; badge là total của tab, lấy bằng ba lần gọi limit=1 withCount (pending không có businessDate; confirmed và rejected theo ngày hiện tại); số đếm D-6 cho せり là một request riêng type=auction status=pending (chỉ đếm, danh sách せり ở S-020)",
+        "Mọi lần gọi danh sách gửi type=negotiated; tab Chờ chốt mặc định mọi ngày chưa khóa theo D-3 (gồm Mọi ngày chưa khóa, Hôm nay, và ngày từ CLS_DAY_LIST cho ROLE-003 hoặc các business_date trong dòng đã tải cho ROLE-005); hai tab hôm nay cố định ngày hiện tại và không áp D-3; CLS_DAY_LIST lỗi thì D-3 chỉ còn hai lựa chọn đầu, không chặn bảng",
+        "Tab Đã chốt hôm nay: panel chi tiết chỉ đọc (ẩn nút Từ chối, nút Chốt, ghi chú kiểm lại và khối hạn mức); tab Đã từ chối hôm nay: cột lý do từ chối (reject_code) và panel kết quả từ chối; tab Chờ chốt rỗng có liên kết Xem đã chốt hôm nay sang tab Đã chốt",
+        "Banner báo sớm M_COM_016 theo SYS_ME khi ngày hiện tại locked hoặc reopen_requested (trạng thái day-locked) là phần riêng với dữ liệu: danh sách chỉ hiện trạng thái rỗng khi truy vấn thật sự không có dòng; pending của ngày cũ còn mở vẫn hiển thị và chốt được theo ngày của giao dịch; ca kiểm: hôm nay locked nhưng ngày trước còn pending thì vẫn thấy và thao tác được",
+        "ROLE-005 chỉ đọc (aal2): chỉ gọi SYS_ME và TRD_LIST, ẩn hẳn nút chốt, từ chối và khối hạn mức, bên mua không có số 許可 hoặc 承認; số liệu là ảnh chụp, không polling; ca đua hai ROLE-003 xử lý cùng giao dịch thì nhận INVALID_STATE"
+      ],
+      "depends": [
+        "E03-BE-08",
+        "E05-BE-01",
+        "E10-SYS-01",
+        "E04-FE-03"
+      ],
+      "parent": "E03-FE-03"
+    },
+    {
+      "key": "E03-FE-03b",
+      "type": "fe",
+      "special": "参加上限 (khi tạo và khi chốt)",
+      "title": "S-016b: xem trước, dự báo 参加上限 và chốt giao dịch",
+      "goal": "Panel xem chi tiết trước khi chốt, nút Chốt, banner tự từ chối (trạng thái licensed-check, auto-rejected).",
+      "specs": [
+        "TRD_CONFIRMATION_LIST_SPEC A2, A3, A5, A11",
+        "FR-TRD-002 AC1, AC2",
+        "FR-TRD-007 AC2, AC3"
+      ],
+      "dod": [
+        "Chọn giao dịch của 売買参加者 ở tab Chờ chốt thì gọi TRD_LIMIT_USAGE_GET theo business_day_id của giao dịch và hiện panel dự báo: đã dùng khi chốt = used_confirmed_jpy + used_adjustment_jpy (không dùng used_jpy vì có cả pending khác), cộng giá trị giao dịch đang chọn (qty nhân unit_price), so với hạn mức hiện hành; ví dụ hạn mức 100, confirmed 60, điều chỉnh 10, giao dịch 30 thì 100, đạt",
+        "API hạn mức lỗi: ẩn phần dự báo (hiện Không tải được 参加上限), nút Chốt vẫn bấm được vì RPC quyết định; không vô hiệu nút Chốt chỉ vì dự báo cho thấy sẽ bị từ chối",
+        "Nút Chốt tách khỏi nút Từ chối, không gắn phím Enter, không có hộp thoại xác nhận (panel xem trước là bước kiểm tra); chốt thành công: toast M_TRD_015",
+        "Bấm Chốt mà RPC tự từ chối: banner M_TRD_012 điền {1}{2}{3} từ params [used_jpy, value_jpy, limit_jpy] hoặc M_TRD_011 khi do tư cách, hiển thị panel chi tiết (trạng thái auto-rejected), cập nhật dòng và số đếm",
+        "Lỗi khi chốt: INVALID_STATE thì đóng modal nếu mở, banner M_TRD_008, tải lại tab hiện tại và số đếm; NOT_FOUND thì banner M_COM_007 và tải lại; DAY_LOCKED thì mở component S-024 và tải lại sau khi đóng; mất mạng hoặc timeout thì banner M_COM_003, bật lại nút, tải lại danh sách trước khi bấm lại; 503 thì M_COM_002; 500 thì hộp thoại M_COM_001 kèm requestId; MFA_REQUIRED (ROLE-005) thì sang bước TOTP rồi quay lại"
+      ],
+      "depends": [
+        "E03-FE-03a",
+        "E03-BE-04c",
+        "E03-BE-07"
+      ],
+      "parent": "E03-FE-03"
+    },
+    {
+      "key": "E03-FE-03c",
+      "type": "fe",
+      "title": "S-016c: từ chối tay giao dịch",
+      "goal": "Hộp thoại từ chối thủ công kèm lý do (trạng thái reject-modal).",
+      "specs": [
+        "TRD_CONFIRMATION_LIST_SPEC A4",
+        "FR-TRD-002 AC3"
+      ],
+      "dod": [
+        "Hộp thoại từ chối có lý do bắt buộc (trống thì M_COM_009), tối đa 500 ký tự, gửi đã trim; lỗi VALIDATION từ server hiện inline ở ô lý do",
+        "Từ chối thành công: toast M_TRD_016, giao dịch chuyển sang tab đã từ chối; không có thao tác mở lại giao dịch đã từ chối",
+        "Đóng hộp thoại khi ô lý do đã có nội dung thì hỏi xác nhận M_COM_020; lỗi INVALID_STATE, NOT_FOUND, DAY_LOCKED xử lý như E03-FE-03b; mất mạng thì giữ nội dung hộp thoại và bật lại nút"
+      ],
+      "depends": [
+        "E03-FE-03a",
+        "E03-BE-05"
+      ],
+      "parent": "E03-FE-03"
+    },
+    {
+      "key": "E03-FE-04",
+      "type": "fe",
+      "title": "S-017 TRD_CANCELLATION: hủy giao dịch chờ chốt (cả hai loại)",
+      "goal": "Danh sách giao dịch pending và hộp thoại hủy, 5 trạng thái theo spec; ROLE-005 chỉ đọc.",
+      "specs": [
+        "TRD_CANCELLATION_SPEC (5 trạng thái: normal, cancel-modal, cancelled, already-confirmed, day-locked)",
+        "FR-TRD-003"
+      ],
+      "dod": [
+        "Danh sách giao dịch pending của cả hai loại; bộ lọc: loại (D-1: negotiated, auction, hoặc tất cả), ngày (D-2 như S-016, CLS_DAY_LIST lỗi thì chỉ còn hai lựa chọn đầu), ô tìm (D-3: trim, tối đa 30 ký tự, khớp một phần mã giao dịch, mã lot, mã hoặc tên bên mua)",
+        "Banner báo sớm khi ngày hiện tại đã 締め (trạng thái day-locked) không làm rỗng danh sách: pending của ngày cũ còn mở vẫn hiện và hủy được; DAY_LOCKED từ API mở component S-024",
+        "Bấm Hủy: gọi TRD_GET trước; pending thì mở hộp thoại hủy, confirmed thì hộp thoại M_TRD_010 hướng dẫn sang yêu cầu điều chỉnh (TRADE_ALREADY_CONFIRMED khi gọi hủy cũng vậy), rejected hoặc cancelled thì banner M_TRD_008 và tải lại",
+        "Hộp thoại hủy: lý do bắt buộc (trống thì M_COM_009), tối đa 500 ký tự; đóng khi đã có nội dung thì hỏi M_COM_020; thành công: toast M_TRD_017, dòng biến mất, số liệu giảm; lot còn giao dịch pending khác vẫn public dù số dư bằng 0",
+        "Lỗi INVALID_STATE và NOT_FOUND: đóng hộp thoại, banner (M_TRD_008, M_COM_007), tải lại danh sách; mất mạng hoặc timeout: banner M_COM_003, giữ nội dung hộp thoại, tải lại danh sách trước khi bấm lại",
+        "ROLE-005 (aal2) chỉ xem: ẩn nút hủy, không gọi TRD_CANCEL"
+      ],
+      "depends": [
+        "E03-BE-06",
+        "E03-BE-08",
+        "E05-BE-01",
+        "E04-FE-03",
+        "E10-SYS-01"
+      ]
+    },
+    {
+      "key": "E03-FE-05",
+      "type": "fe",
+      "special": "số dư chung (BP-b)",
+      "title": "S-018 TRD_AUCTION_LOT_LIST: lot công khai cho せり",
+      "goal": "Danh sách lot công khai cho người điều hành ghi kết quả せり, 3 trạng thái theo spec.",
+      "specs": [
+        "TRD_AUCTION_LOT_LIST_SPEC (3 trạng thái: normal, empty, day-locked)",
+        "FR-TRD-004"
+      ],
+      "dod": [
+        "Hiển thị lot public có số dư lớn hơn 0; thứ tự mặc định received_at tăng (giả định, OQ-1 còn mở: theo mã lot hay thứ tự lên sàn); chỉ hiện số Loại 1, 2, 3 của 目利き (không dùng nhãn tốt hay đạt, Q49); không có cột giá",
+        "Ô tìm mã lot (D-1): trim, tối đa 30 ký tự chặn ở ô, không có thông báo, không kiểm định dạng LOT-YYYYMMDD-NNNN vì lot di trú giữ mã gốc, khớp một phần",
+        "Số liệu là ảnh chụp, không tự làm mới; tổng chỉ đếm ở lần tải đầu và khi đổi bộ lọc",
+        "Ngày hiện tại locked hoặc reopen_requested: banner M_COM_016 và khóa nút ghi (trạng thái day-locked), danh sách vẫn xem được vì lot không gắn ngày",
+        "Trạng thái empty khi không có lot khớp",
+        "Lot đã sold được hoàn số lượng và quay về public (Q36) hiện lại ở lần tải kế tiếp (màn không polling)"
+      ],
+      "depends": [
+        "E02-BE-06",
+        "E10-SYS-01",
+        "E04-FE-03"
+      ]
+    },
+    {
+      "key": "E03-FE-06",
+      "type": "fe",
+      "special": "参加上限 và số dư chung (BP-b)",
+      "title": "S-019 TRD_AUCTION_RESULT_RECORD: ghi kết quả せり",
+      "goal": "Form nhập kết quả cuối cùng, 5 trạng thái theo spec.",
+      "specs": [
+        "TRD_AUCTION_RESULT_RECORD_SPEC (5 trạng thái: normal, saved, validation-error, limit-exceeded, day-locked)",
+        "FR-TRD-004",
+        "FR-TRD-007"
+      ],
+      "dod": [
+        "Người thắng chọn qua PAU_PARTICIPANT_LIST với eligible=auction (仲卸, 売買参加者, 買出人); số lượng kiểm như S-015 và vượt số dư D-3 thì M_TRD_003 ở client trước khi gửi (RPC vẫn kiểm lại dưới khóa); đơn giá chỉ chữ số, tối đa 2.147.483.647 (chặn ở ô); Idempotency-Key như S-015",
+        "Người thắng là 売買参加者 thì hiện khối 参加上限 từ TRD_LIMIT_USAGE_GET; vượt hạn mức hiển thị M_TRD_004 và còn lại âm (trạng thái limit-exceeded); chưa đặt hạn mức thì không kiểm (Q2)",
+        "Lưu thành công (trạng thái saved): hiển thị dữ liệu vừa lưu, số dư cập nhật theo remaining, form về trống, focus ô người thắng; nếu remaining bằng 0 thì chuyển S-018 với toast M_TRD_018 kèm mã lot; lỗi INSUFFICIENT_QUANTITY, PARTICIPANT_*, INVALID_STATE, DAY_LOCKED (component S-024), CONFLICT xử lý theo bảng lỗi của spec",
+        "Banner ngày khóa M_COM_016 và M_TRD_007 là banner (không phải toast); mức đã dùng hiển thị theo used_jpy của API (xem chỗ hở về mô tả hai thành phần)"
+      ],
+      "depends": [
+        "E03-BE-03",
+        "E03-BE-07",
+        "E02-BE-06",
+        "E01-BE-10",
+        "E10-SYS-01",
+        "E04-FE-03"
+      ]
+    },
+    {
+      "key": "E03-FE-07",
+      "type": "fe",
+      "special": "参加上限 (khi tạo và khi chốt)",
+      "title": "S-020 TRD_AUCTION_CONFIRM_QUEUE: chốt kết quả せり",
+      "goal": "Hàng đợi chốt kết quả せり, 4 trạng thái theo spec; ROLE-005 chỉ đọc.",
+      "specs": [
+        "TRD_AUCTION_CONFIRM_QUEUE_SPEC (4 trạng thái: normal, confirm-modal, auto-rejected, empty)",
+        "FR-TRD-005",
+        "FR-TRD-007"
+      ],
+      "dod": [
+        "Danh sách pending của せり (type=auction); ô tìm (D-1): trim, tối đa 30 ký tự chặn ở ô, khớp một phần mã giao dịch và mã lot, mặc định lấy từ tham số q của URL; mở hộp thoại xác nhận trước khi chốt (khác S-016)",
+        "Bấm chốt (không kiểm hiệu lực hoặc hạn mức ở client, màn không gọi TRD_LIMIT_USAGE_GET): tự từ chối thì đóng modal, banner M_TRD_011 hoặc M_TRD_012 điền từ params kèm restored_qty và lot, bỏ dòng và số đếm (trạng thái auto-rejected); chốt thành công toast M_TRD_015",
+        "Lỗi chốt: INVALID_STATE hoặc NOT_FOUND thì đóng modal, banner, tải lại bảng; DAY_LOCKED mở S-024; mất mạng hoặc timeout thì banner M_COM_003, giữ nguyên modal, bật lại nút Chốt (thử lại an toàn vì chốt lần hai trả INVALID_STATE, không áp quy tắc tải lại trước khi bấm lại của S-016); LIST trả VALIDATION thì banner M_COM_008, bỏ cursor, tải lại trang đầu",
+        "Pending của ngày cũ còn mở vẫn chốt được; ROLE-003 có liên kết sang màn hủy và sang S-018, ẩn với ROLE-005; ROLE-005 chỉ đọc: vào bằng liên kết từ màn đối soát với tham số q là mã giao dịch, nút ghi ẩn hẳn; trạng thái empty khi không có giao dịch khớp tìm kiếm"
+      ],
+      "depends": [
+        "E03-BE-08",
+        "E03-BE-04c",
+        "E04-FE-03",
+        "E10-SYS-01"
+      ]
+    },
+    {
+      "key": "E03-FE-08",
+      "type": "fe",
+      "title": "S-021 TRD_AUCTION_HISTORY: tra cứu lịch sử せり theo lot",
+      "goal": "Màn tra cứu chỉ đọc cho ROLE-005, 3 trạng thái theo spec.",
+      "specs": [
+        "TRD_AUCTION_HISTORY_SPEC (3 trạng thái: normal, empty, not-found; bảng nhãn hành động)",
+        "FR-TRD-006"
+      ],
+      "dod": [
+        "Ô mã lot (D-1): bắt buộc 1 đến 30 ký tự, trống khi bấm Tra cứu thì M_COM_009 ngay dưới ô và không gọi API; gõ từ 3 ký tự thì debounce 250 ms gọi LOT_SEARCH, tối đa 10 gợi ý; chọn gợi ý dùng id lot, gõ tay thì LOT_SEARCH lấy dòng khớp chính xác; không khớp thì hiển thị trạng thái not-found",
+        "Gọi TRD_AUCTION_HISTORY (limit 20), hiển thị theo thời gian tăng dần, nhiều giao dịch phân biệt theo mã giao dịch; Tải thêm nối 20 sự kiện vào cuối (vẫn tăng dần) và cập nhật tổng",
+        "Bảng nhãn hành động theo spec: lot.quantity_confirm, auction.record, auction.confirm, auction.reject_auto, auction.cancel, adjustment.approve (giá trị hiệu lực trước và sau, ngày gắn delta), hành động khác hiển thị mã thô",
+        "Trạng thái empty khi lot chưa có せり; not-found khi mã lot không tồn tại; chỉ đọc, không có thao tác ghi; ROLE-005 cần aal2; lỗi mạng giữ dữ liệu đang hiển thị"
+      ],
+      "depends": [
+        "E03-BE-09",
+        "E02-BE-03",
+        "E10-SYS-01"
+      ],
+      "special": "せり (BP-b)"
+    },
+    {
+      "key": "E03-QA-01",
+      "type": "qa",
+      "special": "số dư chung (BP-b)",
+      "title": "QA đầu cuối: luồng 相対取引 và せり (tạo, chốt, từ chối, hủy)",
+      "goal": "Kiểm thử vòng đời giao dịch từ trình duyệt thật với lot đã công khai.",
+      "specs": [
+        "FR-TRD-001..006",
+        "BP-b"
+      ],
+      "dod": [
+        "Kịch bản 相対取引: tạo, chốt (tạo giao hàng), từ chối tay, hủy; số dư lot giảm khi tạo và hoàn đúng khi từ chối hoặc hủy; lot chuyển sold khi số dư 0 và hết pending",
+        "Kịch bản せり: ghi kết quả với 買出人 (hợp lệ ở せり, không hợp lệ ở 相対取引), chốt, tự từ chối khi người thắng bị tạm dừng, hủy; 卸売業者 không là bên mua; từ chối tay chỉ cho 相対取引",
+        "Ca bên mua bị tạm dừng sau khi tạo (dùng RPC tạm dừng của E-01): chốt thì tự từ chối participant_ineligible, hoàn số lượng",
+        "Hai loại giao dịch dùng chung một số dư: giao dịch 相対取引 và せり trên cùng lot không làm số dư âm",
+        "ROLE-005 chỉ đọc ở S-016, S-017, S-020; lịch sử せり hiển thị đủ sự kiện; mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt"
+      ],
+      "depends": [
+        "E03-FE-02",
+        "E03-FE-03",
+        "E03-FE-04",
+        "E03-FE-06",
+        "E03-FE-07",
+        "E03-FE-08",
+        "E02-BE-07",
+        "E01-BE-14"
+      ]
+    },
+    {
+      "key": "E03-QA-02",
+      "type": "qa",
+      "special": "参加上限 (khi tạo và khi chốt)",
+      "title": "QA: 参加上限 khi tạo và khi chốt",
+      "goal": "Kiểm thử chặn khi tạo, tự từ chối khi chốt, ảnh hưởng của hạ hạn mức và của 差額記録.",
+      "specs": [
+        "FR-TRD-007",
+        "ADR-013 R3..R8",
+        "TRD_NEGOTIATED_CREATE_TECH §4.4",
+        "TRD_CONFIRM_TECH §4.4"
+      ],
+      "dod": [
+        "Tạo vượt hạn mức thì bị chặn, không giữ chỗ, có audit guard.write_blocked; hạn mức 100, đã dùng 70: tạo thêm 40 bị chặn (110 > 100), thêm 30 được (100 không lớn hơn 100)",
+        "Fixture chốt: hạn mức 100; confirmed 60; điều chỉnh +10; giao dịch đang chốt 30; pending khác 90. Kỳ vọng: API used_jpy = 190; dự báo và kiểm khi chốt = 60 + 10 + 30 = 100 nên confirmed, không được tự từ chối vì con số 190. Cùng fixture nhưng giao dịch đang chốt 31: tổng 101 nên rejected participation_limit, hoàn qty, 0 dòng deliveries, 1 audit",
+        "Ca không làm tròn: hạn mức 100, tổng đã dùng 99,9, giao dịch 0,2 thì 100,1 > 100 nên chặn dù hiển thị làm tròn xuống 100",
+        "Ca điều chỉnh: điều chỉnh +10 ghi vào ngày D-1 không cộng vào ngày D; điều chỉnh -10 ghi vào ngày D làm giảm mức đã dùng đúng 10; trên màn dùng 20 + 70 + 10 = 100",
+        "Hạn mức bị hạ giữa ngày có hiệu lực ngay ở lần chốt kế; hạn mức chưa đặt thì không kiểm; 仲卸 và 買出人 không bị kiểm; giao dịch hủy hoặc từ chối thôi tính vào mức đã dùng",
+        "Điều chỉnh trong các ca trên dựng bằng dữ liệu seed trong harness DB (không phụ thuộc rpc_adjustment_decide); mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả"
+      ],
+      "depends": [
+        "E03-BE-02",
+        "E03-BE-04",
+        "E03-BE-07",
+        "E03-FE-02b",
+        "E01-BE-13",
+        "E04-DB-02",
+        "E04-DB-03"
+      ]
+    },
+    {
+      "key": "E03-QA-03",
+      "type": "qa",
+      "special": "参加上限 và số dư chung (BP-b)",
+      "title": "QA: đồng thời, idempotency và khóa ngày",
+      "goal": "Kiểm thử ca hai phiên, gửi lặp và quy tắc ngày khóa trên PostgreSQL.",
+      "specs": [
+        "TRD_NEGOTIATED_CREATE_TECH §4.2, §4.3",
+        "TRD_CONFIRM_TECH §4.2, §4.3",
+        "ADR-013 R5",
+        "REQ-001 §8.1 #2",
+        "Q85"
+      ],
+      "dod": [
+        "Gửi lặp: cùng Idempotency-Key cùng payload trả 200 replayed và không tạo giao dịch thứ hai; cùng khóa khác payload trả CONFLICT; hai request đua cùng khóa chỉ tạo một giao dịch",
+        "Ca hai lot khác nhau, cùng người tạo và cùng Idempotency-Key, payload khác: đúng một giao dịch được tạo, request thua nhận 409 CONFLICT, không giữ chỗ và không có audit tạo thừa (suy luận từ hợp đồng khóa, chạy trên PostgreSQL để xác nhận)",
+        "Hai phiên: hai ROLE-003 chốt cùng một giao dịch thì đúng một thành công, người sau nhận INVALID_STATE; chốt đua với hủy và với từ chối tay; hai giao dịch của cùng bên mua đua 参加上限 thì nối đuôi, không cùng vượt",
+        "Ngày khóa: ngày locked hoặc reopen_requested thì DAY_LOCKED và có audit; hôm nay bị 締め nhầm rồi mở lại thì nhận giao dịch mới, ngày reopened cũ thì không; pending của ngày cũ chưa khóa vẫn chốt được",
+        "Thứ tự khóa lot, participant, giao dịch, ngày không gây deadlock với RPC đổi số dư của E-02; kiểm với RPC điều chỉnh của E-04 chỉ khi đã có E04-ADJ-DECIDE, nếu chưa có thì dùng harness DB hai phiên và ghi rõ",
+        "Mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả"
+      ],
+      "depends": [
+        "E03-BE-02",
+        "E03-BE-04",
+        "E03-BE-05",
+        "E03-BE-06",
+        "E05-BE-04",
+        "E05-BE-05",
+        "E04-DB-04",
+        "E04-BE-03"
+      ]
+    }
+  ]
+}

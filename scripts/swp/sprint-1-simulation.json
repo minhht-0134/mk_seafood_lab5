@@ -1,0 +1,154 @@
+{
+ "sprint": "Sprint 1",
+ "from": "2026-11-02",
+ "to": "2026-11-13",
+ "simulated": true,
+ "planned_swp": 51,
+ "planned_hours": 178.5,
+ "scenario": {
+  "overrun": {
+   "E10-INF-01": 1.3
+  },
+  "blocked": [
+   "E09-CLR-02"
+  ]
+ },
+ "items": [
+  {
+   "key": "E09-CLR-02",
+   "owner": "QA-1",
+   "status": "Blocked",
+   "note": "Chờ khách hàng trả lời câu hỏi làm rõ"
+  },
+  {
+   "key": "E03-DOC-01c",
+   "owner": "BE-2",
+   "status": "Done",
+   "done_on": "2026-11-03",
+   "actual_hours": 10.5
+  },
+  {
+   "key": "E10-CLR-01",
+   "owner": "QA-1",
+   "status": "Done",
+   "done_on": "2026-11-02",
+   "actual_hours": 3.5
+  },
+  {
+   "key": "E10-INF-01",
+   "owner": "BE-1",
+   "status": "Done",
+   "done_on": "2026-11-06",
+   "actual_hours": 22.8
+  },
+  {
+   "key": "E04-FE-03",
+   "owner": "FE-1",
+   "status": "Done",
+   "done_on": "2026-11-03",
+   "actual_hours": 10.5
+  },
+  {
+   "key": "E10-CLR-02",
+   "owner": "QA-1",
+   "status": "Done",
+   "done_on": "2026-11-03",
+   "actual_hours": 3.5
+  },
+  {
+   "key": "E08-CLR-03",
+   "owner": "QA-1",
+   "status": "Done",
+   "done_on": "2026-11-03",
+   "actual_hours": 3.5
+  },
+  {
+   "key": "E08-CLR-01",
+   "owner": "QA-1",
+   "status": "Done",
+   "done_on": "2026-11-04",
+   "actual_hours": 3.5
+  },
+  {
+   "key": "E08-CLR-02",
+   "owner": "QA-1",
+   "status": "Done",
+   "done_on": "2026-11-05",
+   "actual_hours": 3.5
+  },
+  {
+   "key": "E07-CLR-02",
+   "owner": "QA-1",
+   "status": "Done",
+   "done_on": "2026-11-05",
+   "actual_hours": 3.5
+  },
+  {
+   "key": "E07-CLR-01",
+   "owner": "QA-1",
+   "status": "Done",
+   "done_on": "2026-11-06",
+   "actual_hours": 3.5
+  },
+  {
+   "key": "E10-DB-01",
+   "owner": "BE-2",
+   "status": "Done",
+   "done_on": "2026-11-11",
+   "actual_hours": 17.5
+  },
+  {
+   "key": "E09-CLR-01",
+   "owner": "QA-1",
+   "status": "Done",
+   "done_on": "2026-11-10",
+   "actual_hours": 10.5
+  },
+  {
+   "key": "E09-CLR-03",
+   "owner": "QA-1",
+   "status": "Done",
+   "done_on": "2026-11-10",
+   "actual_hours": 3.5
+  },
+  {
+   "key": "E09-CLR-06",
+   "owner": "QA-1",
+   "status": "Done",
+   "done_on": "2026-11-11",
+   "actual_hours": 3.5
+  },
+  {
+   "key": "E10-DB-02",
+   "owner": "BE-1",
+   "status": "In Progress",
+   "note": "Chưa xong cuối sprint",
+   "actual_hours": 15.7
+  },
+  {
+   "key": "E05-CLR-02",
+   "owner": "QA-1",
+   "status": "Done",
+   "done_on": "2026-11-12",
+   "actual_hours": 3.5
+  },
+  {
+   "key": "E01-DB-01",
+   "owner": "BE-2",
+   "status": "Todo",
+   "note": "Chờ việc phụ thuộc chưa xong"
+  },
+  {
+   "key": "E10-AUD-01",
+   "owner": "BE-1",
+   "status": "Todo",
+   "note": "Chờ việc phụ thuộc chưa xong"
+  },
+  {
+   "key": "E10-DB-03",
+   "owner": "BE-2",
+   "status": "Todo",
+   "note": "Chờ việc phụ thuộc chưa xong"
+  }
+ ]
+}

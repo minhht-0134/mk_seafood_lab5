@@ -1,0 +1,800 @@
+{
+  "epic": {
+    "key": "E-08",
+    "title": "E-08 Thông báo (notifications-rules)",
+    "goal": "Gửi thông báo sự kiện (trong ứng dụng và email) qua outbox và worker, đảm bảo gửi và thử lại thông báo Critical trong 5 phút, và cho ROLE-007 cấu hình, xem cảnh báo vận hành và lịch sử gửi.",
+    "specs": [
+      "FR-NTF-001..003",
+      "design/notifications-rules",
+      "NTF_DB",
+      "ADR-007"
+    ],
+    "out_of_scope": [
+      "Bảng outbox_events, ops_alerts, danh mục loại sự kiện OUTBOX_DB §4.1.1 và hàm phát sự kiện dùng chung (E-10)",
+      "Các job và RPC phát sự kiện nghiệp vụ (E-01, E-04, E-05, E-06, E-09)",
+      "Tính thưởng và sinh báo cáo (E-06, E-09), chỉ gọi tuần tự từ worker",
+      "Quy chế và tỷ lệ (FR-NTF-004, đã gộp vào E-06)",
+      "SMS và FAX",
+      "Màn hộp thư in-app (khối việc cần làm ở trang chủ, E-01)"
+    ]
+  },
+  "issues": [
+    {
+      "key": "E08-DOC-01",
+      "type": "doc",
+      "parent_of": [
+        "E08-DOC-01a",
+        "E08-DOC-01b"
+      ],
+      "title": "Soạn API Design (BM-2-901-52) cho nhóm API notifications-rules",
+      "goal": "Soạn API Design cho 7 API và hợp đồng worker, chia 2 sub-issue.",
+      "specs": [
+        "api-list §2.9 NTF và §3 NTF_JOB_OUTBOX_DISPATCH, DLV_JOB_OVERDUE_SCAN",
+        "api-design/_index (L5)",
+        "BM-2-901-52",
+        "PREMISE (mục Thêm: API Design)"
+      ],
+      "dod": [
+        "Hoàn thành khi 2 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E08-DOC-01a",
+      "type": "doc",
+      "title": "API Design: cấu hình, cảnh báo vận hành và lịch sử gửi (5 API)",
+      "goal": "NTF_CONFIG_LIST, NTF_CONFIG_SAVE, NTF_OPS_ALERT_LIST, NTF_OPS_ALERT_ACK, NTF_SEND_LOG_LIST.",
+      "specs": [
+        "api-list NTF_CONFIG_*, NTF_OPS_ALERT_*, NTF_SEND_LOG_LIST",
+        "NTF_NOTIFICATION_CONFIG_SPEC §4.3, §6",
+        "Q22, Q37, Q62, Q68 (đã chốt)"
+      ],
+      "dod": [
+        "Mỗi API một file {API_ID}_API.md theo mẫu BM-2-901-52: request, response, quyền ROLE-007 aal2, mã lỗi, link SPEC và TECH",
+        "Chốt khóa response (đề xuất của SPEC, DQ-4): NTF_CONFIG_LIST (items[4] gồm id, event_type, threshold_days, send_time, is_critical, updated_by_name, updated_at, recipients[]), NTF_CONFIG_SAVE (body recipientIds[], thresholdDays, sendTime, isCritical → ok, config), NTF_OPS_ALERT_LIST (items[], next_cursor, unacknowledged_count), NTF_OPS_ALERT_ACK, NTF_SEND_LOG_LIST (items[], next_cursor)",
+        "Chốt tham số lọc: ops-alerts (acknowledged: chốt bảng request→điều kiện vì SPEC ghi vừa false mặc định vừa bỏ trống là tất cả, đề xuất vắng tham số là tất cả và UI gửi false tường minh; severity, alertType, limit 20, cursor); send-logs (from và to ISO JST bắt buộc, eventType, channel, result, outboxEventId, limit 20, cursor); chốt khoảng tối đa của bộ lọc lịch sử gửi (OQ-5) và mức severity mặc định theo từng alert_type (OQ-8, OUTBOX_DB chưa chốt)",
+        "Chốt xử lý đua ghi cấu hình (OQ-4): hiện ghi sau thắng, audit giữ trước và sau, không có CONFLICT; chốt có thêm updated_at vào body và CONFLICT (M_COM_014) hay không; xác nhận tên action audit theo AUDIT_DB §4.1.1 (notification_config.save, entity_id là event_type; ops_alert.acknowledge, entity ops_alert) thay vì đặt tên mới",
+        "Chốt giá trị seed 4 dòng cấu hình (người nhận mặc định, loại nào Critical) theo Q3 sau khi có quyết định ở E08-CLR-02",
+        "Chốt đường đọc business_date cho danh sách cảnh báo: S-037 Data Mapping mô tả JOIN business_days nhưng ROLE-007 không có SELECT bảng này (CORE_DB, E10-DB-03); dùng hàm definer hẹp của E08-BE-03; ghi chỗ hở"
+      ],
+      "depends": [
+        "E08-CLR-01",
+        "E08-CLR-02",
+        "E08-CLR-03"
+      ],
+      "parent": "E08-DOC-01"
+    },
+    {
+      "key": "E08-DOC-01b",
+      "type": "doc",
+      "title": "API Design: hộp thư in-app và hợp đồng worker (2 API, 2 job)",
+      "goal": "NTF_INBOX_LIST, NTF_INBOX_MARK_READ, NTF_JOB_OUTBOX_DISPATCH, DLV_JOB_OVERDUE_SCAN.",
+      "specs": [
+        "api-list NTF_INBOX_LIST, NTF_INBOX_MARK_READ, §3 hai job",
+        "NTF_CRITICAL_RETRY_TECH §3, §4",
+        "OUTBOX_DB §4.1.1, §4.2",
+        "ADR-007 R1..R11"
+      ],
+      "dod": [
+        "File {API_ID}_API.md cho hai API hộp thư (mọi role, chỉ thông báo của chính người gọi) và hợp đồng hai job (đầu vào, đầu ra, lịch, mã lỗi nội bộ)",
+        "Chốt hợp đồng worker: lịch pg_cron 20 giây (cần pg_cron từ 1.5), kick pg_net sau commit cho sự kiện Critical (best effort), bảng lịch thử lại theo nhóm (thường 1 lần; Critical 4 lần với backoff 20, 40, 80 giây và hạn 5 phút; nội bộ 3 lần với backoff 1 và 5 phút (đề xuất); SFTP 4 lần cách 4 phút trong 15 phút), người nhận từng loại sự kiện",
+        "Chốt hợp đồng handler nội bộ: business_day_locked gọi tuần tự job_incentive_calculate rồi worker_report_generate (lỗi bước nào thì cả cặp vào retry_wait, G19), rule_version_activated gọi worker_report_generate, report_rpt06_ready đẩy SFTP và ghi worker_sftp_result; khớp E06-DOC-01a và hợp đồng báo cáo của E-09",
+        "Chốt ngưỡng outbox_stale (X, đề xuất 10 phút, Q5) và ngưỡng và đơn vị của delivery_overdue (xem E08-CLR-01); chốt nội dung mẫu tiêu đề và nội dung thông báo (mẫu câu chữ còn [ĐIỀN]) và quy tắc che email trong log (Q8)",
+        "Chốt đơn vị xét retry là (sự kiện, người nhận, kênh) và cách tổng hợp trạng thái sự kiện từ lịch sử log (hợp đồng chung của BE-08b và BE-08c); ghi chỗ hở: TECH §4.3 bước 3 chỉ nói người chưa success, không phân biệt kênh",
+        "Chốt giới hạn thời gian của một lần xử lý (ngân sách mỗi attempt, cách gửi email tuần tự hoặc song song khi nhiều người nhận, kích thước lô khi 100 sự kiện Critical cùng đến) để chứng minh lịch 260 giây (4P + 4T + Σbackoff với T là thời gian xử lý trọn một attempt, không chỉ timeout một email); ghi rõ cách xử lý sự kiện đã claim mà hết ngân sách (trả lại hoặc coi là một lần lỗi, không để chờ thành stale); chốt một bảng backoff nội bộ cuối cùng (OUTBOX_DB ghi [1,5,15] phút, TECH ghi [1,5] phút với 3 lần thử)",
+        "Chốt định danh lần nhận để chống kết quả muộn của lần claim cũ (TECH §4.4 chỉ kiểm không còn processing, chưa phủ ca claim lại rồi đang processing); ghi chỗ hở; không đặt yêu cầu exactly-once cho email (giao ít nhất một lần, ADR-007 R7)",
+        "Hợp đồng gọi với E06-BE-01a cho business_day_locked: begin (transaction riêng) rồi job rồi báo cáo; nhánh bỏ qua job khi đã succeeded hoặc rate_missing vẫn chạy báo cáo; fail chỉ khi job thưởng hết lượt (TECH NTF §4.3 bước 4 chỉ nêu cặp job, thiếu begin và fail, ghi chỗ hở)",
+        "Chốt quan hệ giữa mốc dòng treo 2 phút (NTF §4.1) và hạn Critical 5 phút (NTF §3): ví dụ claim ở 20, 60, 120, 220 giây, worker chết sau claim 220 thì chỉ đủ điều kiện treo sau 340 giây nếu chỉ dùng 2 phút nên quá hạn; đề xuất Critical đang processing hết hạn theo deadline trừ một chu kỳ tick, dùng cùng finalize_outbox_failed và token guard; ghi chỗ hở nguồn, không tự chọn một bên",
+        "Chốt hiệu lực của log kết quả stale (token không khớp) khi tổng hợp và retry: log stale chỉ ghi để quan sát; success của bất kỳ attempt nào cho một đích vẫn coi đích đã gửi (email đã đi, giao ít nhất một lần, tránh gửi lặp); lỗi, kể cả lỗi vĩnh viễn, từ log stale không tham gia quyết định trạng thái của claim mới; mỗi trạng thái sự kiện và tập đích retry chỉ dựa trên kết quả hợp lệ của attempt hiện hành và success đã có",
+        "Chốt nơi tăng attempt_count: chỉ worker_outbox_claim tăng khi nhận, worker_outbox_result chỉ ghi lỗi, lịch retry và trạng thái theo token đã nhận; ghi chỗ hở: INC_INCENTIVE_CALCULATE_TECH §4.1 (bảng lỗi) ghi worker_outbox_result tăng attempt_count, NTF_CRITICAL_RETRY_TECH §4.2 ghi claim tăng"
+      ],
+      "depends": [
+        "E08-CLR-01",
+        "E08-CLR-02",
+        "E08-CLR-03"
+      ],
+      "parent": "E08-DOC-01"
+    },
+    {
+      "key": "E08-DB-01",
+      "type": "db",
+      "special": "outbox + worker (ADR-007)",
+      "title": "Migration notification_configs và notification_config_recipients: cấu hình 4 loại sự kiện",
+      "goal": "Cấu hình người nhận, ngưỡng, giờ gửi, cờ Critical cho đúng 4 loại sự kiện F-030.",
+      "specs": [
+        "NTF_DB §4.1, §4.2, §5, §6",
+        "FR-NTF-003 AC1, AC2, AC4",
+        "Q3 (xem E08-CLR-02)"
+      ],
+      "dod": [
+        "notification_configs theo NTF_DB §4.1: event_type chỉ participant_expiring, dispute_opened, export_failed, delivery_overdue (duy nhất, không mở rộng), threshold_days lớn hơn 0 hoặc rỗng, send_time, is_critical mặc định false, updated_by (khóa ngoại profiles, ON DELETE RESTRICT), updated_at; tối đa 4 dòng; lịch sử trước và sau nằm ở audit_logs, không lưu phiên bản trong bảng",
+        "notification_config_recipients: khóa chính (config_id, profile_id), khóa ngoại tới cấu hình (CASCADE) và profiles (RESTRICT), chỉ mục theo profile_id; RPC chặn lưu tập rỗng; tài khoản disabled bị worker bỏ qua",
+        "Seed 4 dòng cấu hình khi khởi tạo (người nhận mặc định, loại Critical theo quyết định ở E08-CLR-02); mỗi dòng có ít nhất một người nhận khi go-live (tiền đề của worker)",
+        "RLS bật, SELECT cho ROLE-007; ghi chỉ qua rpc_notification_config_save (ROLE-007, aal2); không grant ghi cho authenticated; DB không CHECK send_time hay cặp loại phát ngay và send_time rỗng (OQ-9: route kiểm; DB-01 chờ quyết định ở E08-DOC-01a có thêm CHECK hay không; nếu không thêm thì route là chỗ kiểm duy nhất)"
+      ],
+      "depends": [
+        "E01-DB-01",
+        "E08-CLR-02",
+        "E08-DOC-01a"
+      ]
+    },
+    {
+      "key": "E08-DB-02",
+      "type": "db",
+      "special": "outbox + worker (ADR-007)",
+      "title": "Migration notifications: hộp thư trong ứng dụng",
+      "goal": "Một dòng cho mỗi (sự kiện, người nhận); người nhận chỉ đổi được read_at.",
+      "specs": [
+        "NTF_DB §4.3, §5, §6",
+        "FR-NTF-001 AC2",
+        "Q44 (xem E08-CLR-03)"
+      ],
+      "dod": [
+        "Cột theo NTF_DB §4.3: outbox_event_id (khóa ngoại outbox_events, RESTRICT), recipient_id (khóa ngoại profiles), event_type (chép từ outbox_events, không CHECK riêng vì nhận cả loại Critical ngoài F-030 và adjustment_requested, adjustment_decided), title, body (không chứa secret, dữ liệu cá nhân tối thiểu), is_critical (chép từ outbox), created_at, read_at rỗng nghĩa là chưa đọc",
+        "Chỉ mục duy nhất (outbox_event_id, recipient_id) để worker chạy lặp không tạo thông báo đôi (ADR-007 R7); chỉ mục (recipient_id, created_at) và chỉ mục một phần theo read_at rỗng cho số chưa đọc",
+        "RLS bật: SELECT khi recipient_id bằng auth.uid() (mọi role); không trigger; không grant ghi cho authenticated, chỉ rpc_notification_mark_read đổi read_at của chính người gọi; worker ghi qua hàm security definer đã thu execute khỏi authenticated (ADR-002 R8); thời hạn lưu chờ E08-CLR-03"
+      ],
+      "depends": [
+        "E01-DB-01",
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03",
+        "E08-CLR-03"
+      ]
+    },
+    {
+      "key": "E08-DB-03",
+      "type": "db",
+      "special": "outbox + worker (ADR-007)",
+      "title": "Migration notification_send_logs: log gửi thông báo, chỉ thêm",
+      "goal": "Mỗi lần thử gửi theo kênh và người nhận một dòng; đổi cấu hình không đụng log cũ.",
+      "specs": [
+        "NTF_DB §4.4, §6",
+        "FR-NTF-001 AC3",
+        "FR-NTF-003 AC3",
+        "Q8, Q24, Q44 (xem E08-CLR-03)"
+      ],
+      "dod": [
+        "Cột theo NTF_DB §4.4: outbox_event_id (khóa ngoại), recipient_id (rỗng được, khóa ngoại profiles), recipient_email (ảnh chụp lúc gửi, rỗng với in_app), channel chỉ in_app hoặc email, attempt_no từ 1 trở lên, result chỉ success hoặc failed, error_message (không ghi API key), attempted_at; CHECK recipient_id hoặc recipient_email có giá trị",
+        "Chỉ mục (outbox_event_id, attempt_no) và chỉ mục một phần theo attempted_at khi result là failed; trigger deny_update_delete() chặn UPDATE và DELETE; thu quyền update, delete, truncate khỏi service_role",
+        "RLS bật, SELECT cho ROLE-007; worker ghi qua hàm security definer; thời hạn lưu và quy tắc che email chờ E08-CLR-03"
+      ],
+      "depends": [
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03",
+        "E01-DB-01",
+        "E08-CLR-03"
+      ]
+    },
+    {
+      "key": "E08-BE-01",
+      "type": "be",
+      "special": "outbox + worker (ADR-007)",
+      "title": "NTF_CONFIG_LIST: đọc 4 cấu hình kèm người nhận",
+      "goal": "Đọc cấu hình cho S-037.",
+      "specs": [
+        "api-list NTF_CONFIG_LIST",
+        "NTF_NOTIFICATION_CONFIG_SPEC §4.3, §6 A1"
+      ],
+      "dod": [
+        "Route: 401, 403 (không phải ROLE-007), MFA_REQUIRED (aal2 ở proxy); đọc qua RLS ROLE-007; GET, không tham số",
+        "Trả tối đa 4 dòng theo thứ tự cố định participant_expiring, dispute_opened, export_failed, delivery_overdue: id, event_type, threshold_days, send_time, is_critical, updated_by_name, updated_at, recipients[] (profile_id, full_name, email, status) qua profiles; không có API GET một loại, màn sửa dùng lại dòng tương ứng",
+        "Seed thiếu (ít hơn 4 dòng) thì trả các dòng có, không lỗi; chỉ đọc"
+      ],
+      "depends": [
+        "E08-DB-01",
+        "E08-DOC-01a",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06"
+      ]
+    },
+    {
+      "key": "E08-BE-02",
+      "type": "be",
+      "special": "MFA",
+      "title": "NTF_CONFIG_SAVE: rpc_notification_config_save (lưu cấu hình một loại)",
+      "goal": "ROLE-007 lưu người nhận, ngưỡng, giờ gửi, cờ Critical; áp dụng cho lần gửi tiếp theo.",
+      "specs": [
+        "FR-NTF-003 AC1..AC4",
+        "NTF_NOTIFICATION_CONFIG_SPEC §4.2, §4.3, §6 A2, A4, A5",
+        "NTF_DB §5"
+      ],
+      "dod": [
+        "Route: 401, 403 (không phải ROLE-007), MFA_REQUIRED (aal2 ở proxy); RPC kiểm aal2 trước has_role (MFA_REQUIRED trước FORBIDDEN, không audit); 415 và 400; eventType ngoài bốn giá trị thì NOT_FOUND; recipientIds rỗng thì VALIDATION fields.recipientIds với M_NTF_001 (chặn lưu); thresholdDays không dương thì M_COM_011; sendTime chỉ 08:00 hoặc 17:00 cho hai loại do job sinh (participant_expiring, delivery_overdue), trống thì M_COM_009; hai loại phát ngay luôn nhận sendTime rỗng; tài khoản nhận không tồn tại thì NOT_FOUND",
+        "Thay toàn bộ tập người nhận của loại đó, gán updated_by bằng người gọi và updated_at, khóa dòng notification_configs của loại đó (FOR UPDATE) trước khi đọc before và thay tập người nhận, rồi ghi write_audit kèm before và after (cấu hình và tập người nhận) trong cùng giao dịch, để hai lần lưu đồng thời được tuần tự hóa và tập cuối là trọn một tập (không trộn hai tập); không chặn lưu khi ngưỡng trống (job không sinh cảnh báo và ghi ops_alerts expiry_threshold_missing, theo FR-PAU-005 AC3) hay khi tập có tài khoản vừa bị vô hiệu hóa (worker bỏ qua, 0 người hợp lệ thì no_recipient)",
+        "Áp dụng từ lần gửi tiếp theo: sự kiện đã vào outbox giữ cờ is_critical cũ; không đụng notification_send_logs (FR-NTF-003 AC3); cờ is_critical quyết định có qua luồng Critical hay không; đua ghi: ghi sau thắng (chưa có CONFLICT, OQ-4); response gồm ok và config (như một dòng của NTF_CONFIG_LIST)"
+      ],
+      "depends": [
+        "E08-DB-01",
+        "E08-DOC-01a",
+        "E10-AUD-02",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06"
+      ]
+    },
+    {
+      "key": "E08-BE-03",
+      "type": "be",
+      "special": "MFA",
+      "title": "NTF_OPS_ALERT_LIST: danh sách cảnh báo vận hành",
+      "goal": "Đọc ops_alerts cho tab cảnh báo và badge, kèm số chưa xác nhận.",
+      "specs": [
+        "FR-NTF-002 AC3",
+        "api-list NTF_OPS_ALERT_LIST",
+        "NTF_NOTIFICATION_CONFIG_SPEC §4.3, §6 A7",
+        "OUTBOX_DB §4.2"
+      ],
+      "dod": [
+        "Route GET: 401, 403 (chỉ ROLE-007), aal2; query acknowledged (true, false; vắng tham số nghĩa là tất cả ở phía server, còn UI chip Chưa xác nhận luôn gửi acknowledged=false tường minh, chip Tất cả không gửi tham số; SPEC Data Mapping ghi cả hai nghĩa \"false mặc định\" và \"bỏ trống là tất cả\", bảng request→điều kiện chốt ở E08-DOC-01a), severity (warning hoặc critical), alertType (một trong các giá trị CHECK của OUTBOX_DB §4.2), limit, cursor; tham số sai thì VALIDATION",
+        "items[] gồm id, created_at, severity, alert_type, message, source_event_id, business_date (qua hàm đọc hẹp security definer của issue này, kiểm role ROLE-007 và aal2, chỉ trả ngày của các cảnh báo được phép đọc; không mở SELECT business_days cho mọi role vì CORE_DB và E10-DB-03 chỉ cho ROLE-003 và ROLE-005, còn S-037 Data Mapping mô tả JOIN bảng này), null khi không có business_day_id, acknowledged_by_name, acknowledged_at; sắp (created_at, id) giảm, keyset theo cặp 20 dòng; unacknowledged_count đếm trên chỉ mục một phần ops_alerts_open_idx (không đếm tổng cho các lọc khác)",
+        "Chỉ đọc; dòng chỉ được thêm bởi worker, job và RPC nghiệp vụ, ROLE-007 không xóa"
+      ],
+      "depends": [
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03",
+        "E08-DOC-01a",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06"
+      ]
+    },
+    {
+      "key": "E08-BE-04",
+      "type": "be",
+      "special": "MFA",
+      "title": "NTF_OPS_ALERT_ACK: rpc_ops_alert_ack (xác nhận cảnh báo)",
+      "goal": "ROLE-007 xác nhận một cảnh báo, một lần, không hoàn tác.",
+      "specs": [
+        "FR-NTF-002 AC3",
+        "api-list NTF_OPS_ALERT_ACK",
+        "NTF_NOTIFICATION_CONFIG_SPEC §6 A3, A5"
+      ],
+      "dod": [
+        "Route: 401, 403 (không phải ROLE-007), MFA_REQUIRED (aal2 ở proxy); RPC kiểm aal2 trước has_role (MFA_REQUIRED trước FORBIDDEN, không audit); id không khớp số thì VALIDATION; không có cảnh báo thì NOT_FOUND; đã xác nhận (người khác vừa xác nhận) thì INVALID_STATE",
+        "Ghi acknowledged_by và acknowledged_at một lần, kiểm trạng thái sau khi khóa hàng để hai ROLE-007 bấm cùng lúc chỉ một thành công; write_audit cùng giao dịch; không hoàn tác, không xóa, không gửi lại; response gồm ok, acknowledged_by_name, acknowledged_at"
+      ],
+      "depends": [
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03",
+        "E08-DOC-01a",
+        "E10-AUD-02",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06"
+      ]
+    },
+    {
+      "key": "E08-BE-05",
+      "type": "be",
+      "special": "MFA",
+      "title": "NTF_SEND_LOG_LIST: lịch sử gửi theo bộ lọc",
+      "goal": "Tra notification_send_logs, chỉ đọc, keyset.",
+      "specs": [
+        "FR-NTF-001 AC3",
+        "api-list NTF_SEND_LOG_LIST",
+        "NTF_NOTIFICATION_CONFIG_SPEC §4.2, §4.3, §6 A7",
+        "Q8, Q44 (xem E08-CLR-03)"
+      ],
+      "dod": [
+        "Route GET: 401, 403, aal2; from và to (YYYY-MM-DD, JST) bắt buộc, thiếu hoặc from sau to thì VALIDATION, khoảng tối đa theo quyết định ở DOC-01a; eventType, channel (in_app hoặc email), result (success hoặc failed), outboxEventId (số nguyên từ 1), limit, cursor",
+        "items[] gồm id, attempted_at, outbox_event_id, event_type và is_critical (qua outbox_events), recipient_name (qua profiles), recipient_email (che theo quy tắc ở E08-CLR-03), channel, attempt_no, result, error_message; sắp (attempted_at, id) giảm, keyset theo cặp (attempted_at, id) 20 dòng (các log của nhiều người và kênh trong một lần result có thể trùng attempted_at), không đếm tổng; lọc theo outboxEventId trả đủ chuỗi lần thử của sự kiện đó",
+        "Chỉ đọc; log chỉ thêm nên không có API sửa hay xóa"
+      ],
+      "depends": [
+        "E08-DB-03",
+        "E08-DOC-01a",
+        "E08-CLR-03",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06"
+      ]
+    },
+    {
+      "key": "E08-BE-06",
+      "type": "be",
+      "special": "outbox + worker (ADR-007)",
+      "title": "NTF_INBOX_LIST: hộp thư trong ứng dụng của người gọi",
+      "goal": "Danh sách thông báo của chính người gọi, chưa đọc trước, cho khối việc cần làm ở trang chủ.",
+      "specs": [
+        "api-list NTF_INBOX_LIST",
+        "FR-NTF-001 AC2",
+        "NTF_DB §4.3, §5"
+      ],
+      "dod": [
+        "Route GET: 401, mọi role đăng nhập (không phải ROLE-007 riêng); chỉ trả thông báo có recipient_id bằng người gọi, chưa đọc trước rồi mới nhất trước; RLS tầng 2 chặn đọc thông báo của người khác",
+        "Mỗi dòng gồm id, event_type, title, body, is_critical, created_at, read_at; keyset theo quy ước chung; không có API xóa; chỉ mục (recipient_id, created_at) và chỉ mục chưa đọc cho số đếm",
+        "Header của các màn không có hộp thông báo; hộp thư hiển thị ở khối việc cần làm của trang chủ (E01-FE-01c)"
+      ],
+      "depends": [
+        "E08-DB-02",
+        "E08-DOC-01b",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02"
+      ]
+    },
+    {
+      "key": "E08-BE-07",
+      "type": "be",
+      "special": "outbox + worker (ADR-007)",
+      "title": "NTF_INBOX_MARK_READ: rpc_notification_mark_read (đánh dấu đã đọc)",
+      "goal": "Người nhận đổi read_at của chính thông báo của mình.",
+      "specs": [
+        "api-list NTF_INBOX_MARK_READ",
+        "NTF_DB §5, §6"
+      ],
+      "dod": [
+        "Route POST: 401, mọi role; id không khớp số thì VALIDATION; thông báo không tồn tại hoặc không thuộc người gọi thì NOT_FOUND (không lộ sự tồn tại thông báo của người khác)",
+        "Chỉ đặt read_at một lần cho thông báo của chính người gọi (gọi lại không đổi giá trị đã có, không lỗi); không đổi cột nào khác; RPC security definer với search_path rỗng; response gồm ok và read_at"
+      ],
+      "depends": [
+        "E08-DB-02",
+        "E08-DOC-01b",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02"
+      ]
+    },
+    {
+      "key": "E08-BE-08",
+      "type": "be",
+      "special": "outbox + worker (ADR-007)",
+      "parent_of": [
+        "E08-BE-08a",
+        "E08-BE-08b",
+        "E08-BE-08c",
+        "E08-BE-08d"
+      ],
+      "title": "NTF_JOB_OUTBOX_DISPATCH: worker gửi thông báo và xử lý sự kiện outbox",
+      "goal": "Edge Function worker sau pg_cron 20 giây: nhận lô, giải người nhận, gửi, ghi log, thử lại Critical, xử lý sự kiện nội bộ; chia 4 sub-issue.",
+      "specs": [
+        "FR-NTF-001",
+        "FR-NTF-002",
+        "NTF_CRITICAL_RETRY_TECH §3, §4.2..§4.5",
+        "ADR-007 R2..R11"
+      ],
+      "dod": [
+        "Hoàn thành khi 4 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E08-BE-08a",
+      "type": "be",
+      "special": "outbox + worker (ADR-007)",
+      "title": "Worker (a): kích hoạt, bảo vệ bằng secret và nhận lô (worker_outbox_claim)",
+      "goal": "pg_cron, kick pg_net, secret của Edge Function, claim bằng for update skip locked.",
+      "specs": [
+        "NTF_CRITICAL_RETRY_TECH §4.2",
+        "ADR-007 R2, R3, R9",
+        "ADR-002 R8"
+      ],
+      "dod": [
+        "Edge Function NTF_JOB_OUTBOX_DISPATCH nhận tick pg_cron mỗi 20 giây (UTC, cần pg_cron từ 1.5: có ca spike xác nhận lịch theo giây) và kick pg_net cho sự kiện Critical sau commit (best effort, mất kick thì tick kế vẫn nhận); header secret sai hoặc thiếu biến môi trường (khóa email, khóa SSH) thì từ chối, log FATAL, không claim (401 hoặc 500 của Edge Function); không kết nối được DB thì log FATAL, 503, tick sau thử lại",
+        "worker_outbox_claim(p_limit) (đề xuất 50, giới hạn theo ngân sách thời gian của một lần chạy theo DOC-01b): cập nhật status processing, locked_at, attempt_count cộng 1 cho các dòng pending hoặc retry_wait có next_attempt_at đến hạn, sắp is_critical giảm rồi next_attempt_at, for update skip locked, theo chỉ mục outbox_events_due_idx; hai worker chạy chồng (cron và kick) không nhận trùng; mỗi lần nhận trả kèm định danh lần nhận (attempt_count và locked_at tại lúc claim) để worker_outbox_result đối chiếu",
+        "Dòng processing có locked_at cũ hơn 2 phút (riêng sự kiện Critical còn coi là treo khi now() không nhỏ hơn created_at cộng 5 phút trừ một chu kỳ tick 20 giây, để mất callback ở lần cuối vẫn kết thúc trong hạn 5 phút; đề xuất của backlog vì NTF_CRITICAL_RETRY_TECH §3 và §4.1 ghi cả hạn 5 phút lẫn mốc 2 phút, ghi chỗ hở ở E08-DOC-01b) (worker chết giữa chừng) được claim coi là một lần thử lỗi: retry_wait nếu còn lượt và còn hạn, ngược lại failed bằng đúng giao thức kết thúc dùng chung ở DoD cuối của issue này (finalize_outbox_failed: outbox failed, ops_alerts và sự kiện con theo nhóm, sftp_exports failed cho SFTP, worker_report_mark_failed cho báo cáo; chạy đúng một lần, bỏ qua sự kiện đã ở trạng thái cuối); hàm security definer, thu quyền thực thi khỏi anon và authenticated, chỉ service role gọi được (ADR-002 R8); secret chỉ ở secret store của Edge Function, không trong repo (ADR-007 R9)",
+        "Giao thức kết thúc dùng chung (issue này là chủ, E08-BE-08c chỉ gọi lại; với sự kiện business_day_locked còn gọi worker_incentive_run_fail của E06-BE-01a nếu dòng incentive_runs của lần khóa vẫn running, không đổi succeeded hoặc rate_missing thành failed khi lỗi chỉ ở báo cáo) finalize_outbox_failed(sự kiện, token): do worker_outbox_result (E08-BE-08c) gọi khi hết lượt và do worker_outbox_claim gọi khi thu hồi dòng processing treo ở lần cuối (không có callback); thực hiện trong một giao dịch và đúng một lần: outbox failed, ops_alerts và sự kiện con theo nhóm (notification_failed, job_failed, sftp_failed kèm export_failed), worker_sftp_result failed (E09-BE-06), worker_report_mark_failed (E09-BE-05a); sự kiện đã ở trạng thái cuối thì không kích hoạt lại; callback muộn của lần thử cũ vẫn bị bỏ"
+      ],
+      "depends": [
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03",
+        "E08-DOC-01b",
+        "E09-BE-06",
+        "E09-BE-05a",
+        "E06-BE-01a"
+      ],
+      "parent": "E08-BE-08"
+    },
+    {
+      "key": "E08-BE-08b",
+      "type": "be",
+      "special": "outbox + worker (ADR-007)",
+      "title": "Worker (b): giải người nhận và gửi hai kênh (in_app, email)",
+      "goal": "Tính lại tập người nhận mỗi lần xử lý, ghi notifications, gửi email qua HTTP API.",
+      "specs": [
+        "NTF_CRITICAL_RETRY_TECH §4.3 (bước 1..3, bảng lỗi)",
+        "FR-NTF-001 AC1, AC2, AC5",
+        "FR-NTF-002 AC5",
+        "Q22, Q37, Q62, Q68 (đã chốt), Q3 (xem E08-CLR-02)"
+      ],
+      "dod": [
+        "Người nhận giải lúc worker xử lý (truy profiles tại thời điểm đó, không danh sách cố định; lần thử lại tính lại tập đích, chỉ gửi các cặp (người nhận, kênh) chưa có dòng success): bốn loại F-030 là notification_config_recipients ghép profiles có status active; Critical ngoài F-030 (day_reopen_requested, day_reopen_decided, business_day_relocked, audit_chain_alert, mfa_factor_removed) là mọi ROLE-007 active (Q37); day_reopen_requested thêm mọi ROLE-005 active trừ người yêu cầu (tra requested_by theo request_id trong payload, Q62); adjustment_requested là mọi ROLE-005 active, adjustment_decided là requested_by, cả hai chỉ kênh in_app (Q68); audit_anchor_daily là ROLE-007 active và email ngoài hệ thống từ secret (Q24, Q79)",
+        "Kênh in_app: ghi notifications (tiêu đề và nội dung dựng theo mẫu, không chứa secret) và log success ngay lần 1, idempotent nhờ chỉ mục duy nhất; kênh email: gọi HTTP API của nhà cung cấp (không SMTP trực tiếp), timeout 10 giây, header idempotency theo định danh đích ổn định {outbox_event_id}:{kênh}:{đích} với đích là recipient_id hoặc (khi recipient_id rỗng, email ngoài hệ thống của audit_anchor_daily) định danh mã hóa của recipient_email (không đưa email thô vào log), giữ nguyên qua các lần retry của cùng đích và khác nhau giữa hai đích, nếu nhà cung cấp hỗ trợ; lỗi tạm (timeout, 429, 5xx) ghi failed và có thể thử lại; lỗi vĩnh viễn (4xx khác 429) ghi failed và không thử lại người đó",
+        "0 người nhận hợp lệ (cấu hình rỗng, mọi tài khoản disabled, chưa có ROLE-007 active): failed ngay, ops_alerts no_recipient, không gửi; day_reopen_requested không còn ROLE-005 nào khác nhưng còn ROLE-007: vẫn gửi cho ROLE-007 kèm ops_alerts warning no_recipient (payload request_id, ghi rõ thiếu ROLE-005 duyệt), sự kiện không failed vì lý do này; lần thử từ 2 chỉ gửi các cặp (người nhận, kênh) chưa success: in_app đã success không chặn thử lại email của cùng người; email ngoài hệ thống (recipient_id rỗng, audit_anchor_daily) định danh theo recipient_email chứ không coi mọi dòng rỗng là một người"
+      ],
+      "depends": [
+        "E08-BE-08a",
+        "E08-DB-01",
+        "E08-DB-02",
+        "E08-DB-03",
+        "E08-CLR-02",
+        "E01-BE-06"
+      ],
+      "parent": "E08-BE-08"
+    },
+    {
+      "key": "E08-BE-08c",
+      "type": "be",
+      "special": "outbox + worker (ADR-007)",
+      "title": "Worker (c): ghi kết quả, lịch thử lại theo nhóm và cảnh báo khi hết lượt (worker_outbox_result)",
+      "goal": "Chèn log, chốt trạng thái sent, retry_wait hoặc failed, tạo ops_alerts đúng nhóm.",
+      "specs": [
+        "NTF_CRITICAL_RETRY_TECH §3 (bảng lịch), §4.4",
+        "FR-NTF-001 AC3, AC4",
+        "FR-NTF-002 AC1..AC4",
+        "ADR-007 R4, R5, R5a, R6"
+      ],
+      "dod": [
+        "worker_outbox_result(p_event_id, p_results): chèn một dòng notification_send_logs cho mỗi (kênh, người nhận) với attempt_no bằng attempt_count; sự kiện chuyển sent và ghi sent_at khi mọi cặp (người nhận, kênh) đích đều đã có success trong toàn bộ lịch sử log của sự kiện (không chỉ trong p_results của lần này; kết quả stale chỉ ghi quan sát, lỗi của log stale không đổi trạng thái claim mới theo quy tắc ở E08-DOC-01b); lỗi vĩnh viễn của một cặp không bị che bởi thành công của cặp khác (sự kiện kết thúc failed khi hết lượt hoặc có cặp lỗi vĩnh viễn, không sent); kết quả chỉ được áp lên sự kiện khi định danh lần nhận (attempt_count và locked_at) vẫn khớp lúc cập nhật nguyên tử, và sự kiện còn processing; không khớp (đã bị claim lại sau 2 phút, kể cả khi lần claim mới cũng đang processing) thì bỏ kết quả, không đổi trạng thái sự kiện, chỉ chèn log với attempt_no của lần gửi thực tế (không mượn attempt_count hiện tại) và log WARN; trùng (outbox_event_id, recipient_id) ở notifications thì ON CONFLICT DO NOTHING",
+        "Lịch thử lại: thường (F-030 cờ tắt, adjustment_requested, adjustment_decided) 1 lần, lỗi chỉ ghi log, không ops_alerts (F-030 AC4); Critical 4 lần với backoff 20, 40, 80 giây, chỉ hẹn lần sau khi now cộng backoff cộng 10 giây còn nhỏ hơn created_at cộng 5 phút (lần 4 kết thúc muộn nhất khoảng 260 giây); nội bộ 3 lần với backoff 1 và 5 phút (đề xuất); SFTP 4 lần cách 4 phút, hạn 15 phút từ lần thử 1",
+        "Hết lượt: Critical thì failed, failed_at, last_error và ops_alerts notification_failed mức critical (payload người nhận lỗi); nội bộ thì failed và ops_alerts job_failed mức critical (G20); SFTP thì sftp_exports failed, ops_alerts sftp_failed và outbox export_failed (dedup export_failed:{report_run_id}); mỗi sự kiện kết thúc ở đúng một trạng thái cuối sent hoặc failed (FR-NTF-002 AC4)",
+        "Log worker (category worker.notify hoặc worker.sftp, msg outbox.dispatch sent, retry, failed, no_recipient kèm outboxEventId, attempt, eventType, channel, durationMs; không ghi email, khóa API, host SFTP); retry ở mức WARN, failed Critical ở ERROR; worker không ghi audit_logs (gửi thông báo không thuộc FR-RPA-004 AC2)",
+        "worker_outbox_result và các hàm worker khác là security definer với search_path rỗng (gọi bằng tên đầy đủ schema), thu execute khỏi PUBLIC, anon và authenticated, chỉ service role gọi được (ADR-002 R8; policy RLS của bảng không thay quyền gọi hàm)",
+        "Sự kiện report_rpt06_ready: worker_outbox_result gọi worker_sftp_result của E09-BE-06 trong cùng giao dịch, truyền định danh lần nhận (attempt_count và locked_at); kết quả của lần thử cũ bị bỏ ở cả hai bảng",
+        "Khi hết lượt, worker_outbox_result gọi finalize_outbox_failed của E08-BE-08a (không định nghĩa lại ở đây); lịch thử lại, nhóm cảnh báo và sự kiện con theo nhóm của giao thức kết thúc do issue này quy định cho finalize_outbox_failed dùng"
+      ],
+      "depends": [
+        "E08-BE-08b",
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03",
+        "E09-BE-06",
+        "E09-BE-05a"
+      ],
+      "parent": "E08-BE-08"
+    },
+    {
+      "key": "E08-BE-08d",
+      "type": "be",
+      "special": "outbox + worker (ADR-007)",
+      "title": "Worker (d): handler sự kiện nội bộ, đẩy SFTP và giám sát outbox tồn",
+      "goal": "Gọi tuần tự tính thưởng rồi báo cáo, đẩy SFTP RPT-06, cảnh báo outbox_stale.",
+      "specs": [
+        "NTF_CRITICAL_RETRY_TECH §4.3 bước 4, §4.5",
+        "ADR-007 R5a, R6, R11",
+        "INC_INCENTIVE_CALCULATE_TECH §4.1 (bước 2a, 2b, 3 và bảng lỗi), §4.2"
+      ],
+      "dod": [
+        "Sự kiện nội bộ dùng chung đường claim và result: business_day_locked: gọi worker_incentive_run_begin(lock_id) (commit riêng, theo E06-BE-01a); có dòng trả về thì gọi job_incentive_calculate(lock_id), không trả dòng (đã succeeded hoặc rate_missing) thì bỏ qua job nhưng vẫn chạy worker_report_generate (cần số thưởng); lỗi ở bước nào thì cả cặp vào retry_wait (G19, ADR-007 R11); hết lượt vì job thưởng (hoặc worker chết ở lần cuối trong job thưởng, qua đường thu hồi của finalize_outbox_failed ở E08-BE-08a) thì worker_incentive_run_fail(lock_id, INTERNAL_ERROR) được gọi qua cùng giao thức kết thúc kèm outbox failed và ops_alerts job_failed, còn lỗi chỉ của báo cáo sau khi thưởng đã succeeded thì không đổi dòng chạy thưởng thành failed; rule_version_activated gọi worker_report_generate (RPT-12); audit_anchor_daily và report_rpt06_ready theo hợp đồng của E-09 và E-10",
+        "report_rpt06_ready: đẩy SFTP bằng khóa SSH từ secret, kết quả qua worker_sftp_result vào sftp_exports; lỗi (kết nối, xác thực, ghi tệp) ghi last_error không kèm host hay khóa, thử lại theo lịch SFTP; gửi lặp ghi đè đúng tên tệp (ADR-007 R6, R7); chạy được trên Deno hay không do spike (Q4)",
+        "Giám sát outbox tồn ở cuối mỗi lần chạy: có dòng pending hoặc retry_wait với next_attempt_at cũ hơn X (đề xuất 10 phút, Q5 chờ E08-CLR-01) thì chèn một ops_alerts outbox_stale, chỉ khi chưa có dòng cùng loại chưa xác nhận; worker hoặc cron chết hẳn thì bước này cũng không chạy, tín hiệu ngoài DB là thiếu email mốc băm hằng ngày (Q77 đã chốt, không thêm giám sát ngoài)",
+        "Hết lượt của sự kiện business_day_locked hoặc rule_version_activated vì handler báo cáo (hoặc vì job thưởng trước khi handler báo cáo chạy): gọi worker_report_mark_failed(sự kiện) của E09-BE-05a để các báo cáo chưa ở trạng thái cuối thành failed, rồi mới ghi outbox failed và ops_alerts job_failed; handler báo cáo trả lỗi thì cả cặp vào retry_wait, kết thúc bình thường thì sự kiện sent (thiếu nguồn nghiệp vụ là trạng thái cuối, không phải lỗi)"
+      ],
+      "depends": [
+        "E08-BE-08c",
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03",
+        "E08-CLR-01",
+        "E06-BE-01",
+        "E09-BE-05",
+        "E09-BE-06",
+        "E09-DB-02",
+        "E09-DOC-01b"
+      ],
+      "parent": "E08-BE-08"
+    },
+    {
+      "key": "E08-BE-09",
+      "type": "be",
+      "special": "outbox + worker (ADR-007)",
+      "title": "DLV_JOB_OVERDUE_SCAN: job_delivery_overdue_scan (cảnh báo giao hàng tồn đọng)",
+      "goal": "Job theo send_time quét giao hàng còn mở quá ngưỡng và phát sự kiện delivery_overdue.",
+      "specs": [
+        "FR-NTF-001 AC1",
+        "api-list DLV_JOB_OVERDUE_SCAN",
+        "DLV_DB §4.1, §6",
+        "OUTBOX_DB §4.1.1 (delivery_overdue)",
+        "Q5 (xem E08-CLR-01)"
+      ],
+      "dod": [
+        "pg_cron chạy theo send_time của cấu hình delivery_overdue (giờ JST, job tự quy đổi UTC); chọn deliveries có status waiting hoặc in_progress quá ngưỡng threshold_days (đơn vị chờ E08-CLR-01) theo chỉ mục một phần (status, created_at); mỗi giao hàng quá hạn một sự kiện outbox delivery_overdue với dedup_key delivery_overdue:{delivery_id}:{business_date}, chạy lại cùng ngày không phát lần hai (ON CONFLICT DO NOTHING)",
+        "is_critical chép từ cấu hình lúc chèn (Critical thì max_attempts 4, thường thì 1); ngưỡng rỗng thì job không sinh sự kiện và ghi ops_alerts (hành vi tương tự expiry_threshold_missing theo quyết định ở E08-CLR-01); job security definer với search_path rỗng, thu quyền thực thi khỏi PUBLIC, anon và authenticated (chỉ cron hoặc service role gọi), không tự gửi thông báo (worker gửi); lỗi job thì rollback, log và ops_alerts job_failed"
+      ],
+      "depends": [
+        "E07-DB-01",
+        "E08-DB-01",
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03",
+        "E08-DOC-01b",
+        "E08-CLR-01"
+      ]
+    },
+    {
+      "key": "E08-FE-01",
+      "type": "fe",
+      "special": "MFA",
+      "parent_of": [
+        "E08-FE-01a",
+        "E08-FE-01b",
+        "E08-FE-01c",
+        "E08-FE-01d"
+      ],
+      "title": "S-037 NTF_NOTIFICATION_CONFIG: cấu hình thông báo, cảnh báo vận hành, lịch sử gửi",
+      "goal": "Màn quản trị của ROLE-007 với ba tab và màn sửa; 4 trạng thái (normal, edit-error, ops-alerts, send-logs), chia 4 sub-issue.",
+      "specs": [
+        "NTF_NOTIFICATION_CONFIG_SPEC (4 trạng thái wireframe)",
+        "FR-NTF-001 AC3",
+        "FR-NTF-002 AC3",
+        "FR-NTF-003"
+      ],
+      "dod": [
+        "Hoàn thành khi 4 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E08-FE-01a",
+      "type": "fe",
+      "special": "MFA",
+      "title": "S-037a: khung màn, ba tab và danh sách 4 loại cấu hình",
+      "goal": "Khối D và E: tab, bảng cấu hình, ghi chú Critical cố định.",
+      "specs": [
+        "NTF_NOTIFICATION_CONFIG_SPEC §4.1 (C, D, E), §5 (Initializing), §6 A1, A8, A9"
+      ],
+      "dod": [
+        "Mở màn: proxy xử lý hết phiên (M_COM_004, M_COM_005), tài khoản bị khóa (M_PAU_002), role khác ROLE-007 (về trang chủ, M_COM_006), phiên aal1 (bước TOTP, M_COM_019, xong quay lại URL cũ); aal2 thì skeleton, gọi song song SYS_ME, NTF_CONFIG_LIST, NTF_OPS_ALERT_LIST (acknowledged false, limit 1, chỉ lấy unacknowledged_count cho badge); tab theo ?tab=configs, ops-alerts hoặc send-logs (mặc định configs), mỗi tab giữ bộ lọc riêng trong phiên trang",
+        "D-1 ba tab (Cấu hình sự kiện, Cảnh báo vận hành, Lịch sử gửi; tab 2 và 3 gắn 'bổ sung LAB-4'), badge tab 1 cố định 4, tab 2 là số chưa xác nhận, tab 3 không badge; E-1 banner kênh gửi cố định (trong ứng dụng cộng email, không SMS hay FAX, nhà cung cấp email chờ Q3)",
+        "Bảng E đúng thứ tự cố định: loại sự kiện (tên tiếng Việt và mã), người nhận ('n · tên 1, tên 2 +n', tài khoản không active gạch ngang), ngưỡng ('n ngày trước hết hạn', delivery_overdue theo đơn vị chờ Q5, rỗng thì 'Chưa cấu hình' kiểu cảnh báo, hai loại phát ngay '—'), thời điểm gửi ('HH:mm hằng ngày' hoặc 'Ngay khi phát sinh'), chip Critical hoặc Thường, người và giờ cập nhật, liên kết Sửa; E-9 ghi chú các sự kiện Critical cố định ngoài 4 loại (締め再開, chuỗi băm, gỡ MFA) và người nhận",
+        "Seed thiếu dòng thì hiện 'Chưa khởi tạo' không có liên kết Sửa và log client; Lỗi dùng chung: MFA_REQUIRED (bước TOTP, M_COM_019, nội dung đang sửa mất vì không lưu nháp), SESSION_EXPIRED hoặc UNAUTHENTICATED (M_COM_005, M_COM_004), FORBIDDEN (M_COM_006 rồi về trang chủ), mất mạng hoặc timeout (M_COM_003, giữ nội dung, bật lại nút), 503 (M_COM_002), 500 hoặc mã lạ (M_COM_001 kèm requestId), BAD_REQUEST hoặc UNSUPPORTED_MEDIA_TYPE (M_COM_018); không tự làm mới định kỳ"
+      ],
+      "depends": [
+        "E08-BE-01",
+        "E08-BE-03",
+        "E10-SYS-01",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E08-CLR-01"
+      ],
+      "parent": "E08-FE-01"
+    },
+    {
+      "key": "E08-FE-01b",
+      "type": "fe",
+      "special": "MFA",
+      "title": "S-037b: màn sửa cấu hình một loại",
+      "goal": "Khối H: người nhận, ngưỡng, giờ gửi, Critical, lưu.",
+      "specs": [
+        "NTF_NOTIFICATION_CONFIG_SPEC §4.1 (H), §4.2, §5 (E-8, H-3, H-5, H-8, H-12, H-11, H-10, Error H-12)",
+        "FR-NTF-003 AC1, AC2, AC4"
+      ],
+      "dod": [
+        "Mở /notification-configs/[eventType]: gọi NTF_CONFIG_LIST, render khối H của loại đó; eventType ngoài bốn giá trị thì banner M_COM_007 và về danh sách; H-2 loại sự kiện chỉ đọc, H-9 kênh chỉ đọc, H-10 người cập nhật lần cuối kèm liên kết RPA_AUDIT_LOG_SEARCH mở ở tab mới",
+        "H-3 người nhận: ô tìm gọi PAU_ACCOUNT_LIST (q từ 1 ký tự sau 300 ms, status active, limit 20), chọn thêm tag (trùng bỏ qua), bấm ✕ bỏ; số tối đa chờ quyết định (OQ-2); còn 0 tag thì H-4 M_NTF_001 và H-12 disabled",
+        "H-5 ngưỡng chỉ hiện với participant_expiring và delivery_overdue (số nguyên, chỉ chữ số, không dương thì M_COM_011); trống thì gửi null và hiện H-6 M_NTF_002 (cảnh báo, không chặn lưu); H-7 dropdown 08:00 hoặc 17:00 cho hai loại job (trống thì M_COM_009), hai loại phát ngay hiện chữ 'Ngay khi phát sinh' và gửi null; H-8 checkbox Critical kèm mô tả tĩnh",
+        "H-12 Lưu (chỉ khi có thay đổi và có người nhận): kiểm client trước (lỗi thì H-1 M_COM_008 kèm lỗi từng trường, không gọi API), khóa H-11 và H-12 kèm spinner, gọi NTF_CONFIG_SAVE; thành công thì về tab 1 kèm toast M_COM_022 và tải lại; VALIDATION thì H-1 M_COM_008 kèm message theo fields (M_NTF_001, M_COM_011, M_COM_009) dưới trường, giữ nội dung form và bật lại nút Lưu để sửa rồi gửi lại; NOT_FOUND thì M_COM_007 rồi tải lại giữ nội dung đang sửa",
+        "H-11 hoặc ← ở C-2 khi có thay đổi thì hỏi M_COM_020; B-1, A-7 và A-5 (đổi ngôn ngữ JA/VI) khi đang sửa có thay đổi cũng hỏi M_COM_020 trước khi rời; không kiểm đua ghi (ghi sau thắng); Lỗi dùng chung: MFA_REQUIRED (bước TOTP, M_COM_019, nội dung đang sửa mất vì không lưu nháp), SESSION_EXPIRED hoặc UNAUTHENTICATED (M_COM_005, M_COM_004), FORBIDDEN (M_COM_006 rồi về trang chủ), mất mạng hoặc timeout (M_COM_003, giữ nội dung, bật lại nút), 503 (M_COM_002), 500 hoặc mã lạ (M_COM_001 kèm requestId), BAD_REQUEST hoặc UNSUPPORTED_MEDIA_TYPE (M_COM_018); không tự làm mới định kỳ"
+      ],
+      "depends": [
+        "E08-FE-01a",
+        "E08-BE-02",
+        "E01-BE-07"
+      ],
+      "parent": "E08-FE-01"
+    },
+    {
+      "key": "E08-FE-01c",
+      "type": "fe",
+      "special": "MFA",
+      "title": "S-037c: tab cảnh báo vận hành",
+      "goal": "Khối F: lọc, danh sách ops_alerts, xác nhận.",
+      "specs": [
+        "NTF_NOTIFICATION_CONFIG_SPEC §4.1 (F), §5 (F-1, F-2, F-8, F-10, Error F-8), §6 A3, A7",
+        "FR-NTF-002 AC3"
+      ],
+      "dod": [
+        "F-1 chip 'Chưa xác nhận (n)' (mặc định, gửi acknowledged=false) hoặc 'Tất cả' (không gửi tham số, trả cả dòng đã xác nhận), dropdown mức độ (warning, critical) và loại cảnh báo (các giá trị CHECK của OUTBOX_DB §4.2); đổi lọc bỏ cursor, thay bảng; F-2 làm mới giữ lọc và cập nhật badge từ unacknowledged_count",
+        "Cột F-3..F-8: tạo lúc (DD/MM HH:mm JST, mới nhất trước), mức độ (critical đặc, warning gạch), loại cảnh báo (mã), nội dung (message tiếng Việt), nguồn ('outbox #id · DD/MM' hoặc 'job · DD/MM' khi không có sự kiện), xác nhận (nút hoặc 'tên · DD/MM HH:mm'); F-9 chỉ đếm số dòng đã tải (kèm '/ n' khi lọc chưa xác nhận), F-10 Tải thêm 20 dòng; rỗng thì M_COM_021",
+        "F-8 Xác nhận: khóa nút kèm spinner, gọi NTF_OPS_ALERT_ACK, thành công thì ô thành 'tên · giờ', toast M_COM_022, badge giảm 1, lọc chưa xác nhận thì dòng mờ đi và giữ tới lần tải lại; không dialog xác nhận (OQ-6 còn mở), không hoàn tác; INVALID_STATE thì banner M_COM_015 ('Cảnh báo', 'đã xác nhận') rồi tải lại; NOT_FOUND thì M_COM_007; VALIDATION thì M_COM_008 và giữ bảng cũ; Lỗi dùng chung: MFA_REQUIRED (bước TOTP, M_COM_019, nội dung đang sửa mất vì không lưu nháp), SESSION_EXPIRED hoặc UNAUTHENTICATED (M_COM_005, M_COM_004), FORBIDDEN (M_COM_006 rồi về trang chủ), mất mạng hoặc timeout (M_COM_003, giữ nội dung, bật lại nút), 503 (M_COM_002), 500 hoặc mã lạ (M_COM_001 kèm requestId), BAD_REQUEST hoặc UNSUPPORTED_MEDIA_TYPE (M_COM_018); không tự làm mới định kỳ"
+      ],
+      "depends": [
+        "E08-FE-01a",
+        "E08-BE-04"
+      ],
+      "parent": "E08-FE-01"
+    },
+    {
+      "key": "E08-FE-01d",
+      "type": "fe",
+      "special": "MFA",
+      "title": "S-037d: tab lịch sử gửi",
+      "goal": "Khối G: bộ lọc, danh sách notification_send_logs.",
+      "specs": [
+        "NTF_NOTIFICATION_CONFIG_SPEC §4.1 (G), §4.2 (G-1), §5 (G-1, G-3, Error E3, E4, E17, E18)",
+        "FR-NTF-001 AC3",
+        "Q8, Q44 (xem E08-CLR-03)"
+      ],
+      "dod": [
+        "G-1 bộ lọc: khoảng Từ – đến (hai ô DD/MM/YYYY, gửi ISO, mặc định hôm qua đến hôm nay JST, bắt buộc: trống thì M_COM_009 'Khoảng thời gian', 'đến' trước 'từ' thì M_COM_023, khoảng tối đa chờ OQ-5), loại sự kiện, kênh (in_app, email), kết quả (success, failed), mã sự kiện (bỏ # và khoảng trắng, không phải số nguyên từ 1 thì M_COM_024); lỗi kiểm thì inline và không gọi API; bấm Lọc gọi NTF_SEND_LOG_LIST, bỏ cursor, thay bảng",
+        "Cột G-2..G-9: thử lúc (HH:mm:ss, thêm DD/MM khi khác ngày đầu trang), mã sự kiện ('#id', bấm thì điền vào ô mã sự kiện và lọc để thấy đủ chuỗi lần thử), loại sự kiện kèm ⚡ khi Critical, người nhận (tên và email che theo quy tắc chờ Q8), kênh, lần thử (Critical 1..4, nội bộ audit_anchor_daily 1..3, thường luôn 1), kết quả (chip), lỗi (— khi rỗng); G-10 chỉ đếm số dòng đã tải, G-11 Tải thêm 20 dòng; rỗng thì M_COM_021",
+        "Tab ẩn trong màn sửa; chỉ đọc, không có thao tác ghi; VALIDATION của API thì M_COM_008 và giữ bảng cũ; Lỗi dùng chung: MFA_REQUIRED (bước TOTP, M_COM_019, nội dung đang sửa mất vì không lưu nháp), SESSION_EXPIRED hoặc UNAUTHENTICATED (M_COM_005, M_COM_004), FORBIDDEN (M_COM_006 rồi về trang chủ), mất mạng hoặc timeout (M_COM_003, giữ nội dung, bật lại nút), 503 (M_COM_002), 500 hoặc mã lạ (M_COM_001 kèm requestId), BAD_REQUEST hoặc UNSUPPORTED_MEDIA_TYPE (M_COM_018); không tự làm mới định kỳ"
+      ],
+      "depends": [
+        "E08-FE-01a",
+        "E08-BE-05",
+        "E08-CLR-03"
+      ],
+      "parent": "E08-FE-01"
+    },
+    {
+      "key": "E08-QA-01",
+      "type": "qa",
+      "special": "outbox + worker (ADR-007)",
+      "title": "QA: worker gửi thông báo, lịch thử lại Critical và người nhận",
+      "goal": "Kiểm thử worker với nhà cung cấp email giả và PostgreSQL.",
+      "specs": [
+        "FR-NTF-001",
+        "FR-NTF-002",
+        "NTF_CRITICAL_RETRY_TECH §4.2..§4.5 và test case gợi ý",
+        "ADR-007"
+      ],
+      "dod": [
+        "Nhóm thường (F-030 cờ tắt, adjustment_*): gửi một lần, lỗi thì failed chỉ ở log, không ops_alerts; Critical: một người nhận có cả in_app và email, email lỗi tạm hai lần rồi thành công ở lần 3 thì sent với log email attempt_no 1, 2, 3 và log in_app attempt_no 1 (tổng 4 dòng, attempt_no [1,1,2,3]); muốn kiểm đủ attempt 1..4 của email thì fixture là ba lần lỗi rồi thành công (đúng ca gợi ý của TECH §5), không đổi fixture để khớp số dòng; lỗi bốn lần thì failed trong không quá 300 giây từ created_at (đo failed_at trừ created_at của outbox_events) kèm một ops_alerts notification_failed; 4xx vĩnh viễn thì không thử lại; nội bộ lỗi ba lần thì failed kèm job_failed; secret sai thì 401 và không claim",
+        "Người nhận: bốn loại F-030 theo cấu hình (tài khoản disabled bị bỏ); Critical ngoài F-030 gửi mọi ROLE-007 active; day_reopen_requested gửi thêm ROLE-005 active khác người yêu cầu, thiếu ROLE-005 khác thì vẫn gửi ROLE-007 kèm ops_alerts no_recipient mức warning; adjustment_requested gửi ROLE-005 và adjustment_decided gửi requested_by, chỉ in_app; 0 người nhận thì no_recipient và failed",
+        "Sự kiện nội bộ: business_day_locked chạy tuần tự begin, thưởng rồi báo cáo (chi tiết ở ca riêng bên dưới); SFTP lỗi bốn lần cách bốn phút thì sftp_exports failed, ops_alerts sftp_failed và outbox export_failed; ops_alerts outbox_stale chỉ một dòng chưa xác nhận",
+        "Idempotent: dedup_key trùng thì một dòng, worker gọi lại sau timeout không tạo notifications đôi; đổi cấu hình áp từ lần gửi sau (sự kiện đã vào outbox giữ cờ cũ); mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả",
+        "Retry theo kênh: in_app success lần 1 nhưng email lỗi tạm thì lần 2 vẫn gửi lại email cho đúng người đó (không gửi lại in_app), email success lần 3 thì sent; email lỗi vĩnh viễn của một người trong khi người khác success thì không thử lại người đó và sự kiện không báo sent; hai email ngoài hệ thống (recipient_id rỗng) được xét riêng từng địa chỉ",
+        "business_day_locked theo từng bước: begin tạo dòng running rồi job succeeded rồi báo cáo; job lỗi hết ba lần thì incentive_runs failed (error_code INTERNAL_ERROR), outbox failed, ops_alerts job_failed; job succeeded nhưng báo cáo lỗi thì thử lại, lần sau bỏ qua job (không gọi lại) và run vẫn succeeded; giao lại sau rate_missing bỏ qua job và vẫn chạy báo cáo",
+        "Idempotency theo đích: một sự kiện audit_anchor_daily gửi hai email ngoài hệ thống (recipient_id rỗng) với nhà cung cấp giả hỗ trợ idempotency: cả hai được gửi, key khác nhau; retry từng địa chỉ dùng lại đúng key của địa chỉ đó"
+      ],
+      "depends": [
+        "E08-BE-08d",
+        "E08-BE-09",
+        "E04-BE-01",
+        "E05-BE-04",
+        "E05-BE-03"
+      ]
+    },
+    {
+      "key": "E08-QA-02",
+      "type": "qa",
+      "special": "MFA",
+      "title": "QA đầu cuối: cấu hình, cảnh báo vận hành, lịch sử gửi và hộp thư",
+      "goal": "Kiểm thử S-037 và hai API hộp thư từ trình duyệt thật.",
+      "specs": [
+        "FR-NTF-003",
+        "FR-NTF-001 AC3",
+        "FR-NTF-002 AC3",
+        "NTF_NOTIFICATION_CONFIG_SPEC"
+      ],
+      "dod": [
+        "Cấu hình: lưu loại có ngưỡng và giờ gửi; tập người nhận rỗng bị chặn (client M_NTF_001 và server VALIDATION); ngưỡng trống lưu được kèm cảnh báo M_NTF_002; hai loại phát ngay luôn gửi giờ rỗng; đổi cấu hình không đụng log cũ; audit có before và after; aal1 thì MFA_REQUIRED, role khác thì FORBIDDEN",
+        "Cảnh báo: xác nhận một lần, người khác xác nhận trước thì INVALID_STATE (M_COM_015); badge giảm đúng; lọc theo mức độ và loại; không xóa được cảnh báo",
+        "Lịch sử: lọc đủ năm điều kiện, 'đến' trước 'từ' bị chặn, bấm mã sự kiện thấy chuỗi lần thử; hộp thư: mỗi người chỉ thấy thông báo của mình, đánh dấu đã đọc một lần, đánh dấu thông báo của người khác thì NOT_FOUND; mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả",
+        "Lọc cảnh báo: mở thẳng URL không tham số acknowledged (trả tất cả theo hợp đồng DOC), chip Chưa xác nhận chỉ trả dòng chưa xác nhận, chip Tất cả có cả dòng đã xác nhận",
+        "Hai ROLE-007 lưu hai tập người nhận khác nhau cho cùng loại cùng lúc: tập cuối bằng đúng một trong hai tập (không hợp hai tập), hai audit nối đúng before và after theo thứ tự tuần tự hóa, không có CONFLICT",
+        "Keyset lịch sử gửi: fixture nhiều log trùng attempted_at xuyên ranh giới 20 dòng không lặp và không thiếu; cùng kiểm tra tương tự cho danh sách cảnh báo (created_at, id)",
+        "Cảnh báo có business_date: ROLE-007 đọc cảnh báo của ngày cũ, của ngày hôm nay và cảnh báo không có business_day_id (null); role khác bị từ chối"
+      ],
+      "depends": [
+        "E08-FE-01d",
+        "E08-FE-01c",
+        "E08-FE-01b",
+        "E08-BE-06",
+        "E08-BE-07"
+      ]
+    },
+    {
+      "key": "E08-QA-03",
+      "type": "qa",
+      "special": "outbox + worker (ADR-007)",
+      "title": "QA đồng thời và tải: nhận lô song song, 100 sự kiện Critical",
+      "goal": "Kiểm thử hai phiên và tải cho worker.",
+      "specs": [
+        "NTF_CRITICAL_RETRY_TECH §5 (đồng thời và test tải)",
+        "ADR-007 R3, R4, R7"
+      ],
+      "dod": [
+        "Hai phiên claim song song không nhận trùng id; cron và kick pg_net chạy cùng lúc thì mỗi sự kiện chỉ một worker giữ; dòng processing quá 2 phút trở thành lần thử lỗi (retry_wait nếu còn lượt và còn hạn, ngược lại failed); hai ROLE-007 xác nhận cùng cảnh báo thì một thành công",
+        "Worker timeout sau khi email đã đi: lần sau chỉ gửi người chưa success, nhà cung cấp giả có idempotency key thì không trùng thư; producer chạy lại thì một sự kiện; hai lần ghi in_app thì một dòng",
+        "Tải: 100 sự kiện Critical cùng lúc đều có trạng thái cuối trong không quá 5 phút (đo sent_at hoặc failed_at trừ created_at của outbox_events, kể cả sự kiện failed vì không có người nhận và không có dòng log gửi; attempted_at chỉ dùng phân tích từng lần gửi); gồm ca nhiều người nhận mỗi sự kiện; ghi cách đo, số mẫu và kết quả; mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả",
+        "Kết quả muộn sau claim lại: worker A nhận lần 1, bị coi treo sau 2 phút, worker B nhận lần 2; A trả kết quả sau khi B đã claim nhưng trước khi B trả thì không đổi trạng thái sự kiện và log của A mang attempt_no 1; ca B trả trước rồi A trả; ca A trả trước khi bị claim lại",
+        "Quyền hàm: gọi trực tiếp worker_outbox_claim, worker_outbox_result và job_delivery_overdue_scan bằng anon và authenticated đều bị từ chối; service role gọi được",
+        "Worker chết ở lần cuối và không có callback: sau khi claim thu hồi dòng processing treo thì outbox failed, sftp_exports failed kèm sftp_failed và export_failed (SFTP), mọi báo cáo chưa xong của sự kiện thành failed kèm job_failed (sự kiện báo cáo), không bảng nào còn pending hoặc running; chạy thu hồi hai lần không nhân đôi cảnh báo",
+        "Worker chết trong job thưởng ở lượt cuối rồi thu hồi (và thu hồi lặp): outbox failed, incentive_runs failed (không còn running), một ops_alerts job_failed, không nhân đôi; đối chứng worker chết khi báo cáo chạy sau thưởng thành công thì run thưởng giữ nguyên succeeded, chỉ phần báo cáo và outbox kết thúc",
+        "Mất callback ở lượt cuối và ở lượt trước cuối với sự kiện Critical: kết thúc không quá 300 giây từ created_at (đo sent_at hoặc failed_at), callback cũ về sau khi đã hết hạn không đảo trạng thái",
+        "Hiệu lực log stale: A attempt 1 về muộn sau khi B claim và ghi lỗi vĩnh viễn cho đích X, B attempt 2 gửi X thành công thì sự kiện sent; A về trước hoặc sau kết quả của B đều cho cùng kết quả; A success cho đích X thì lần retry kế không gửi lại X; kiểm trạng thái sau B và tập đích của lần retry tiếp theo",
+        "Bộ đếm attempt: lỗi lần 1, 2 rồi thành công lần 3 cho attempt_count bằng 3; ba lần lỗi mới hết ba lượt (max_attempts 3); callback stale không tăng bộ đếm"
+      ],
+      "depends": [
+        "E08-BE-08d",
+        "E08-BE-04"
+      ]
+    },
+    {
+      "key": "E08-QA-04",
+      "type": "qa",
+      "special": "outbox + worker (ADR-007)",
+      "title": "QA: job giao hàng tồn đọng và đường phát sự kiện từ các epic khác",
+      "goal": "Kiểm thử delivery_overdue và các sự kiện outbox do epic khác phát.",
+      "specs": [
+        "FR-NTF-001 AC1",
+        "DLV_DB §6",
+        "OUTBOX_DB §4.1.1",
+        "DLV_JOB_OVERDUE_SCAN"
+      ],
+      "dod": [
+        "job_delivery_overdue_scan: giao hàng waiting hoặc in_progress quá ngưỡng thì một sự kiện delivery_overdue với dedup_key theo giao hàng và ngày, chạy lại cùng ngày không phát lần hai; giao hàng completed hoặc exception không bị quét; ngưỡng rỗng thì không sinh sự kiện và có cảnh báo vận hành; cờ Critical chép từ cấu hình lúc phát",
+        "Tích hợp: dispute_opened (E05-BE-06), adjustment_requested và adjustment_decided (E04-BE-01, E04-BE-03c), day_reopen_requested và day_reopen_decided (E05-BE-04, E05-BE-05), business_day_locked và business_day_relocked (E05-BE-03) khi phát ra đều được worker nhận, đúng người nhận, đúng cờ Critical và max_attempts theo OUTBOX_DB §4.1.1; payload không chứa tiền, lý do hay thông tin cá nhân",
+        "Mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả"
+      ],
+      "depends": [
+        "E08-BE-09",
+        "E08-BE-08c",
+        "E05-BE-06",
+        "E04-BE-03",
+        "E05-BE-05"
+      ]
+    },
+    {
+      "key": "E08-CLR-01",
+      "type": "clarify",
+      "title": "Làm rõ: ngưỡng và đơn vị 'giao hàng tồn đọng', ngưỡng outbox_stale (Q5)",
+      "goal": "Q5 còn mở: đơn vị của threshold_days cho delivery_overdue (ngày nghiệp vụ hay giờ), ngưỡng X của outbox_stale (đề xuất 10 phút) và hành vi khi ngưỡng rỗng.",
+      "specs": [
+        "REQ-001 §8 Q5 (open)",
+        "NTF_DB §4.1 (threshold_days)",
+        "NTF_CRITICAL_RETRY_TECH §4.5",
+        "DLV_DELIVERY_LIST_SPEC OQ-3"
+      ],
+      "dod": [
+        "Có quyết định chấp nhận: đơn vị và giá trị mặc định của ngưỡng delivery_overdue, ngưỡng X của outbox_stale, và hành vi job khi ngưỡng rỗng (có ghi ops_alerts như expiry_threshold_missing hay không); ghi vào PREMISE",
+        "Báo lại E08-BE-08d, E08-BE-09, E08-DOC-01b, E08-FE-01b và E07 (hiển thị tồn đọng nếu có); không tự đặt ngưỡng khi chưa có quyết định"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E08-CLR-02",
+      "type": "clarify",
+      "title": "Làm rõ: nhà cung cấp email, seed 4 cấu hình và loại Critical mặc định (Q3)",
+      "goal": "Q3 còn mở: nhà cung cấp email (HTTP API, idempotency key), người nhận mặc định và loại nào Critical cho bốn loại sự kiện.",
+      "specs": [
+        "REQ-001 §8 Q3 (open)",
+        "NTF_DB §4.1, Câu hỏi mở Q3",
+        "NTF_NOTIFICATION_CONFIG_SPEC OQ-1",
+        "ADR-007 R8"
+      ],
+      "dod": [
+        "Có quyết định chấp nhận: nhà cung cấp email và cách gọi (HTTP API, hỗ trợ idempotency hay không, giới hạn tốc độ), giá trị seed bốn dòng cấu hình (người nhận mặc định, cờ Critical), cách đưa tài khoản người nhận vào seed; ghi vào PREMISE",
+        "Báo lại E08-DB-01, E08-BE-08b, E08-DOC-01a, E08-FE-01a; không tự chọn nhà cung cấp hay giá trị seed khi chưa có quyết định"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E08-CLR-03",
+      "type": "clarify",
+      "title": "Làm rõ: thời hạn lưu thông báo và log gửi, quy tắc che email (Q8, Q44)",
+      "goal": "Q8 và Q44 còn mở: thời hạn lưu notifications và notification_send_logs (APPI), cách che email người nhận trong lịch sử gửi.",
+      "specs": [
+        "REQ-001 §8 Q8 (open), Q44 (open)",
+        "NTF_DB §4.3, §4.4, Câu hỏi mở",
+        "NTF_NOTIFICATION_CONFIG_SPEC OQ-7"
+      ],
+      "dod": [
+        "Có quyết định chấp nhận: thời hạn lưu hai bảng và cách dọn (job hay thủ công), quy tắc che email ở G-5 và trong response NTF_SEND_LOG_LIST; ghi vào PREMISE",
+        "Báo lại E08-DB-02, E08-DB-03, E08-BE-05, E08-FE-01d; không tự đặt thời hạn lưu hay quy tắc che khi chưa có quyết định"
+      ],
+      "depends": []
+    }
+  ]
+}

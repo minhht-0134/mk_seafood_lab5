@@ -1,0 +1,1722 @@
+[
+ {
+  "epic": "E-01",
+  "n": "1",
+  "spec": "PAU README, api-design/_index",
+  "gap": "API Design `{API_ID}_API.md` ghi \"viết ở LAB-5\" nhưng chưa có file nào (lệch L5)",
+  "xl": "Dự kiến sửa thiết kế (PREMISE, mục Thêm): API Design cho mỗi feature, issue E01-DOC-01 (D8)",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-01",
+  "n": "2",
+  "spec": "PAU_DB §8 và REQ-001 §8",
+  "gap": "PAU_DB ghi `open` cho Q2, Q11, Q12, Q13, Q28; REQ-001 ghi `resolved` (chủ dự án 2026-10-14, chờ khách xác nhận)",
+  "xl": "Để mở: lệch ghi chép, backlog theo REQ-001 vì đó là nơi giữ trạng thái",
+  "kind": "open"
+ },
+ {
+  "epic": "E-01",
+  "n": "3",
+  "spec": "ADR-004 R4 và TECH §4.6 #4, Q28",
+  "gap": "R4 ghi bác 再審査 thì về 一時停止; TECH và Q28: khởi từ hết hạn thì bác về 失効",
+  "xl": "Dự kiến sửa thiết kế (PREMISE, mục Sửa): bám TECH và Q28 cho E01-BE-18",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-01",
+  "n": "4",
+  "spec": "FR-PAU-007",
+  "gap": "Cột \"Vai trò liên quan\" ghi ROLE-003 nhưng người duyệt 再審査 là ROLE-005 (TECH §4.6, PAU_DB §5)",
+  "xl": "Để mở: không ảnh hưởng issue, E01-BE-18 theo ROLE-005; DOC-01c ghi rõ hợp đồng quyền",
+  "kind": "open"
+ },
+ {
+  "epic": "E-01",
+  "n": "5",
+  "spec": "ADR-010 R7",
+  "gap": "ROLE-007 duy nhất mất thiết bị thì không ai gỡ được MFA; quy trình khôi phục `[ĐIỀN]`",
+  "xl": "Tạo issue làm rõ E01-CLR-01. Hai tài khoản ROLE-007 chỉ là một phương án cần làm rõ, chưa phải yêu cầu",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-01",
+  "n": "6",
+  "spec": "TECH §4.7",
+  "gap": "Giờ chạy job hết hạn `[ĐIỀN]` (đề xuất 00:05) không có mã Q",
+  "xl": "Giả định (dự kiến PREMISE): 00:05 JST, là tham số cấu hình",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-01",
+  "n": "7",
+  "spec": "PAU_DB §5, Q8",
+  "gap": "ROLE-005 thấy cả `contact` và `basis_no`; phạm vi APPI chờ Q8 (giao LAB-5)",
+  "xl": "Giả định (dự kiến PREMISE): giữ ma trận đọc, không đưa hai trường vào log và báo cáo. Phần còn lại của Q8 (phạm vi dữ liệu cá nhân, thời hạn xử lý) chưa có chủ, sẽ giao cho issue nền tảng khi break E-10",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-01",
+  "n": "8",
+  "spec": "Q31",
+  "gap": "Nơi và thời hạn lưu tệp chứng cứ chưa chốt",
+  "xl": "Giả định (dự kiến PREMISE): bucket riêng tư, thời hạn lưu là cấu hình. Thời hạn cụ thể sẽ giao cho issue nền tảng ở E-10",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-01",
+  "n": "9",
+  "spec": "S01: ADR-010 R6, api-list PAU_MFA_VERIFY, PAU_LOGIN_SPEC A3, OQ-2",
+  "gap": "Sai MFA lần thứ 3: \"quá 3 lần\" hay \"sau 3 lần\"; chỉ tạo challenge mới hay đăng xuất phiên aal1",
+  "xl": "Giả định (dự kiến PREMISE): theo A3 (hủy challenge, đăng xuất aal1, nhập lại mật khẩu); chốt ở E01-DOC-01a",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-01",
+  "n": "10",
+  "spec": "S02: FR-PAU-004 AC2, ADR-004 R6 và TECH §4.6 #4",
+  "gap": "\"Chỉ job ghi hết hạn\" nhưng bác 再審査 khởi từ hết hạn cũng có thể ghi hết hạn (cạnh `review_reject`)",
+  "xl": "Dự kiến sửa thiết kế (PREMISE, mục Sửa): thêm ngoại lệ cho AC2 và R6; đã ghi vào DoD của E01-BE-18, E01-JOB-01b",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-01",
+  "n": "11",
+  "spec": "S03: PAU_DB §5 `rpc_participant_save` và TECH §4.8 #2",
+  "gap": "Điều kiện gia hạn thẳng: căn cứ hiện hành chưa quá hạn, hay hạn hiệu dụng lớn nhất của căn cứ hiện hành và chờ",
+  "xl": "Dự kiến sửa thiết kế (PREMISE, mục Sửa): theo TECH §4.8 #2 (ô PAU_DB §5 tự dẫn sang TECH; hai tài liệu cùng ngày nên không dựa vào \"mới hơn\"); chốt ở E01-DOC-01b, ca kiểm ở E01-BE-12b",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-01",
+  "n": "12",
+  "spec": "S04: PROFILE_FORM A5, VALIDITY I-3 và ADR-013 R3, R4, R7, PREMISE P16",
+  "gap": "FE spec mô tả \"mức đã dùng\" là pending + confirmed, trong khi api-list `TRD_LIMIT_USAGE_GET` (dòng 115) và ADR-013 R7 đã định nghĩa `used_jpy` gồm cả điều chỉnh",
+  "xl": "Để mở: FE hiển thị đúng `used_jpy` API trả; E01-DOC-01b ghi cách hiển thị chi tiết khi điều chỉnh khác 0",
+  "kind": "open"
+ },
+ {
+  "epic": "E-01",
+  "n": "13",
+  "spec": "S05: FR-PAU-004 AC7 và EXPIRY_WARNING_SPEC A1, TECH §4.7 #4",
+  "gap": "\"Còn căn cứ chờ không bị cảnh báo\" so với \"cảnh báo theo hạn hiệu dụng\"",
+  "xl": "Giả định (dự kiến PREMISE): theo A1 và TECH (cảnh báo theo hạn hiệu dụng). Q87, Q88 là câu hỏi khác (hủy căn cứ chờ, khoảng trống) và không giải quyết mâu thuẫn này",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-01",
+  "n": "14",
+  "spec": "S06: VALIDITY E-5, api-list PAU_PARTICIPANT_LIST, PAU_DB §4.7",
+  "gap": "Một trường `expires_on` hai nghĩa (hạn hiệu dụng và hạn căn cứ hiện hành); view không có căn cứ chờ nên role đọc qua view không tính được hạn hiệu dụng",
+  "xl": "Để mở: chốt trường và cách lấy ở E01-DOC-01b",
+  "kind": "open"
+ },
+ {
+  "epic": "E-01",
+  "n": "15",
+  "spec": "Q89",
+  "gap": "Đăng xuất khi mất mạng (`PAU_LOGOUT` không gọi được) chưa định nghĩa",
+  "xl": "Giả định (dự kiến PREMISE): chỉ xóa phiên phía thiết bị, hỏi M_COM_030 nếu còn hàng đợi",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-01",
+  "n": "16",
+  "spec": "Q13",
+  "gap": "Chỉ chốt người duyệt; nội dung hồ sơ 再審査 và quy tắc gỡ tạm dừng 買出人 vẫn `[ĐIỀN]`",
+  "xl": "Để mở: E01-BE-15 giữ quy tắc LAB-1 cho 買出人, E01-BE-17 nhận ghi chú và tệp hồ sơ; chờ khách",
+  "kind": "open"
+ },
+ {
+  "epic": "E-01",
+  "n": "17",
+  "spec": "Q87, Q88",
+  "gap": "Hủy căn cứ chờ; khoảng trống giữa hai căn cứ",
+  "xl": "Giả định (dự kiến PREMISE): không có thao tác hủy, chặn bằng `M_PAU_025`; chờ khách",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-01",
+  "n": "18",
+  "spec": "FR-PAU-004 AC7, FR-PAU-007 AC8, api-list PAU_PARTICIPANT_UPDATE và REVIEW_DECIDE so với TECH §4.8 #4, #5",
+  "gap": "REQ và api-list diễn đạt rộng \"ngày hiệu lực mới không muộn hơn hạn cũ + 1 ngày\"; TECH chỉ áp khi căn cứ hiện hành còn phủ hôm nay và căn cứ mới bắt đầu ở tương lai",
+  "xl": "Dự kiến sửa thiết kế (PREMISE, mục Sửa): theo TECH §4.8 #4, #5; đã phản ánh ở E01-BE-12c và E01-BE-18",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-02",
+  "n": "1",
+  "spec": "README lots §4, api-design/_index",
+  "gap": "API Design `{API_ID}_API.md` của feature lots ghi \"chưa có file (LAB-5)\"",
+  "xl": "Dự kiến sửa thiết kế (PREMISE, mục Thêm): API Design cho mỗi feature, issue E02-DOC-01 (D8)",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-02",
+  "n": "2",
+  "spec": "Q36: REQ-001 §8 và LOT_QUANTITY_RESERVATION_TECH §4.6 #2, LOT_DB §2 và §8, README lots §5 #9, LOT_ATTRIBUTE_CORRECTION_SPEC A7",
+  "gap": "REQ-001 ghi Q36 đã chốt (chủ dự án 2026-10-14): hoàn số lượng thì lot `sold` quay về `public`. TECH §4.6 #2 ghi \"không có chiều sold → public cho tới khi Q36 trả lời\"; LOT_DB §2, §6, §8 còn mở; README §5 #9 và SPEC S-013 A7 chỉ liệt kê Q36 là câu hỏi mở (không khẳng định \"không có chiều\")",
+  "xl": "**Cần bạn xác nhận.** Dự kiến sửa thiết kế (PREMISE, mục Sửa): theo REQ-001 cho E02-BE-09. TECH ghi các TECH của E-03 và E-04 cùng quy tắc, sẽ kiểm khi break hai epic đó. Vế \"khi nào chuyển delivered\" vẫn mở, thuộc E-07",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-02",
+  "n": "3",
+  "spec": "README lots §5 #9, LOT_DB §8, 6 SPEC",
+  "gap": "Còn ghi `open` cho Q36, Q48, Q49, Q50, Q71, Q75, Q76; REQ-001 §8 đã `resolved` (chờ khách xác nhận). Các câu còn mở thật của feature: Q5, Q89, OQ-2, OQ-3, OQ-7 và vế \"delivered\" của Q36",
+  "xl": "Để mở: lệch ghi chép, backlog theo REQ-001",
+  "kind": "open"
+ },
+ {
+  "epic": "E-02",
+  "n": "4",
+  "spec": "Q5 (REQ-001 §8)",
+  "gap": "Thời gian mất kết nối phải chịu, chu kỳ thử lại (đề xuất 15 giây `[ĐIỀN]`), danh sách trình duyệt và tablet; giao LAB-5",
+  "xl": "Giả định (dự kiến PREMISE): chu kỳ 15 giây là cấu hình; tạo issue làm rõ E02-CLR-01 cho trình duyệt, tablet và thời gian mất mạng",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-02",
+  "n": "5",
+  "spec": "LOT_INTAKE_FORM_SPEC OQ-3",
+  "gap": "Có dùng Background Sync (gửi khi tab đã đóng) không, chưa chốt",
+  "xl": "Giả định (dự kiến PREMISE): không dùng, theo LOT_OFFLINE_SYNC_TECH §5 đã chọn không Background Sync; OQ-3 của LOT_INTAKE_FORM_SPEC vẫn ghi `open` nên cần đồng bộ; ghi ở E02-FE-01b",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-02",
+  "n": "6",
+  "spec": "LOT_JUDGMENT_QUEUE_SPEC OQ-2",
+  "gap": "Xóa cache danh sách khi tài khoản khác đăng nhập trên thiết bị chung chưa chốt (cache đã khóa theo tài khoản)",
+  "xl": "Để mở: chốt ở E02-DOC-01a",
+  "kind": "open"
+ },
+ {
+  "epic": "E-02",
+  "n": "7",
+  "spec": "LOT_OFFLINE_SYNC_TECH §4.1 #2, §4.2 #2, LOT_INTAKE_FORM_SPEC OQ-7",
+  "gap": "Giá trị `schemaVersion` khởi đầu (đề xuất 1) và ngưỡng lệch giờ thiết bị (đề xuất 5 phút) là `[ĐIỀN]` không có mã Q",
+  "xl": "Giả định (dự kiến PREMISE): `schemaVersion` khởi đầu 1 (là phiên bản hợp đồng đi cùng bộ chuyển đổi ở FE và BE, không phải tham số đổi độc lập); ngưỡng lệch giờ 5 phút là cấu hình",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-02",
+  "n": "8",
+  "spec": "LOT_OFFLINE_SYNC_TECH §4.4 #1 và các SPEC (DQ-4)",
+  "gap": "Khóa request và response (kể cả của `SYNC_DUPLICATE`) ghi \"chốt ở LAB-5\"",
+  "xl": "Để mở: chốt ở E02-DOC-01a, E02-DOC-01b",
+  "kind": "open"
+ },
+ {
+  "epic": "E-02",
+  "n": "9",
+  "spec": "LOT_DB §2",
+  "gap": "Điều kiện `sold → delivered` là `[ĐIỀN]`",
+  "xl": "Để mở: thuộc E-07 (delivery)",
+  "kind": "open"
+ },
+ {
+  "epic": "E-02",
+  "n": "10",
+  "spec": "Q89 (REQ-001 §8)",
+  "gap": "Đăng xuất khi mất mạng chưa định nghĩa",
+  "xl": "Giả định (trùng dòng 15 của E-01): chỉ xóa phiên phía thiết bị; áp ở E02-FE-01c",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-02",
+  "n": "11",
+  "spec": "LOT_JUDGMENT_FORM_SPEC §4.2 và LOT_OFFLINE_SYNC_TECH §4.3 #4, Q35",
+  "gap": "JF §4.2 ghi \"không chặn lưu khi kết quả sửa giống hiện tại, RPC vẫn ghi audit\"; TECH #4 và Q35 trả SYNC_DUPLICATE (không ghi audit) khi cùng grade, note và cùng người sửa",
+  "xl": "Để mở: ưu tiên nhánh SYNC_DUPLICATE khi cùng người sửa, ghi bản sửa bình thường khi người sửa khác; chốt ở E02-DOC-01a, ghi ở E02-BE-04b, E02-BE-04c",
+  "kind": "open"
+ },
+ {
+  "epic": "E-02",
+  "n": "12",
+  "spec": "LOT_QUANTITY_RESERVATION_TECH §4.5, §4.6 và LOT_ATTRIBUTE_CORRECTION_SPEC A2, A3, Q71",
+  "gap": "F-009 cộng chênh lệch dương vào `available_qty` (trần chỉ so với `initial_qty`) trong lúc còn giao dịch giữ chỗ; hoàn trả sau đó có thể làm số dư vượt `initial_qty` và vỡ CHECK (TECH coi vượt là dữ liệu hỏng, trả 500). Ví dụ: initial 100, công khai 100, giữ chỗ 50, F-009 cộng 50, hoàn 50 thành 150. Suy luận số học từ spec, chưa chạy trên DB thật",
+  "xl": "Tạo issue làm rõ E02-CLR-02; `E02-BE-10b` và `E02-QA-03` phụ thuộc quyết định này",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-03",
+  "n": "1",
+  "spec": "README trading §4, api-design/_index",
+  "gap": "API Design `{API_ID}_API.md` ghi \"viết ở LAB-5\", chưa có file",
+  "xl": "Dự kiến sửa thiết kế (PREMISE, mục Thêm): issue E03-DOC-01 (D8)",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-03",
+  "n": "2",
+  "spec": "Q36: REQ-001 §8 và TRD_CONFIRM_TECH §4.5 #3, TRD_NEGOTIATED_LOT_LIST_SPEC A4, TRD_AUCTION_LOT_LIST_SPEC A1",
+  "gap": "REQ-001 ghi Q36 đã chốt (lot đã bán quay về công khai khi hoàn số lượng); TECH ghi \"không có chiều sold → public (Q36)\", hai SPEC ghi lot `sold` được hoàn vẫn không hiện lại ở danh sách",
+  "xl": "**Cần bạn xác nhận (cùng chỗ hở số 2 của E-02).** Dự kiến sửa thiết kế (PREMISE, mục Sửa): theo REQ-001. Hệ quả ở E-03: lot được hoàn quay về public thì hiện lại ở S-014, S-018 (ghi ở E03-FE-01, E03-FE-05); `E03-BE-04c` chỉ gọi helper của `E02-BE-09`",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-03",
+  "n": "3",
+  "spec": "TRD_DB §8, S-014 OQ-4, S-015 OQ-4, S-016 OQ-6, S-018 OQ-5, OQ-6, S-019 OQ-2, OQ-5, S-020 OQ-1",
+  "gap": "Còn ghi `open` hoặc chờ khách cho Q2, Q6, Q18, Q20, Q36, Q49, Q70; REQ-001 §8 đã `resolved` cho Q2, Q6, Q18, Q20, Q26, Q69, Q70, Q85 (chờ khách xác nhận)",
+  "xl": "Để mở: lệch ghi chép, backlog theo REQ-001",
+  "kind": "open"
+ },
+ {
+  "epic": "E-03",
+  "n": "4",
+  "spec": "TRD_AUCTION_RESULT_RECORD_SPEC A3 và PAU_PARTICIPANT_PROFILE_FORM_SPEC A5, so với TRD_NEGOTIATED_CREATE_TECH §4.4 #3, api-list `TRD_LIMIT_USAGE_GET`, ADR-013 R7, S-015 A3",
+  "gap": "S-019 A3 và PROFILE_FORM A5 mô tả mức đã dùng chỉ là pending và confirmed; TECH, api-list, ADR và S-015 có thêm tổng điều chỉnh (差額記録)",
+  "xl": "Để mở: hợp đồng đã có (`used_jpy` gồm ba thành phần); FE hiển thị `used_jpy` của API; chốt cách hiển thị chi tiết ở E03-DOC-01a. Cùng chỗ hở với E-01",
+  "kind": "open"
+ },
+ {
+  "epic": "E-03",
+  "n": "5",
+  "spec": "Q2 (REQ-001 §8) và api-list TRD_CREATE, TRD_NEGOTIATED_CREATE_TECH §4.4",
+  "gap": "Spec còn thiết kế hai nhánh khi chưa đặt hạn mức (mã `PARTICIPATION_LIMIT_NOT_SET`, \"chỉ khi Q2 chọn chặn\"); Q2 đã chốt: chưa đặt thì không giới hạn",
+  "xl": "Dự kiến sửa thiết kế (PREMISE, mục Sửa): áp quyết định đã chốt của chủ dự án (Q2, chờ khách xác nhận) nên không triển khai nhánh `PARTICIPATION_LIMIT_NOT_SET`; ADR và TECH còn hai nhánh do chưa đồng bộ; ghi ở E03-BE-02b, E03-BE-04b",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-03",
+  "n": "6",
+  "spec": "TRD_NEGOTIATED_CREATE_TECH §4.6 #1, TRD_AUCTION_RECORD_TECH §4.5 #1 (DQ-4)",
+  "gap": "Hai API tạo trả hai dạng response khác nhau (TRD_CREATE: id, trade_code, status, qty, lot; TRD_AUCTION_RECORD: trade_code, remaining); khóa \"chốt ở LAB-5\"",
+  "xl": "Để mở: chốt ở E03-DOC-01a",
+  "kind": "open"
+ },
+ {
+  "epic": "E-03",
+  "n": "7",
+  "spec": "TRD_DB (trigger), ADJ_LOCKED_DAY_GUARD_TECH",
+  "gap": "`trades_guard_locked_day` được liệt kê trong TRD_DB nhưng là \"component\" của TECH ADJ_LOCKED_DAY_GUARD (F-018)",
+  "xl": "Giả định (dự kiến PREMISE): thuộc E-04; E03-DB-01 không tạo trigger, các RPC E-03 phụ thuộc vào nó như lưới an toàn lớp 2",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-03",
+  "n": "8",
+  "spec": "S-014 OQ-2, OQ-3; S-018 OQ-1",
+  "gap": "Chưa có danh mục mặt hàng; thứ tự mặc định của danh sách lot (đề xuất `received_at` tăng); S-018 hỏi sắp theo mã lot hay theo thứ tự lên sàn",
+  "xl": "Giả định (dự kiến PREMISE): mặt hàng lấy từ các dòng đã tải; thứ tự mặc định `received_at` tăng; chờ khách",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-03",
+  "n": "9",
+  "spec": "TRD_NEGOTIATED_CREATE_SPEC OQ-3",
+  "gap": "Gợi ý bên mua có cần hạn mức **còn lại** từng dòng không (`PAU_PARTICIPANT_LIST` không trả mức đã dùng)",
+  "xl": "Giả định (dự kiến PREMISE): gợi ý chỉ hiện hạn mức; \"còn lại\" chỉ ở khối 参加上限 sau khi chọn bên mua; chờ Lead",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-03",
+  "n": "10",
+  "spec": "TRD_AUCTION_HISTORY_SPEC OQ-2, OQ-3, OQ-5",
+  "gap": "Phạm vi sự kiện (gộp `adjustment.approve` theo yêu cầu điều chỉnh, có hiện `guard.write_blocked` không), `LOT_SEARCH` khớp chính xác hay một phần",
+  "xl": "Giả định (dự kiến PREMISE): theo A1 (gộp `adjustment.approve` bằng cách nối qua `trade_adjustment_requests.trade_id`, không gồm `guard.write_blocked`); chốt ở E03-DOC-01c, nghiệm thu bằng nhật ký điều chỉnh thực hoặc fixture ở E03-BE-09",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-03",
+  "n": "11",
+  "spec": "TRD_CONFIRM_TECH §4.2 (khóa `trades` FOR UPDATE) so với TRD_DB (quy tắc khóa), ADR-013 R5, ADJ_LOCKED_DAY_GUARD_TECH §4.3 (FOR NO KEY UPDATE)",
+  "gap": "Hai kiểu khóa hàng `trades` cho cùng nhóm RPC đổi trạng thái. Chưa có bằng chứng deadlock của riêng các RPC TRD",
+  "xl": "Để mở: ghi cả hai nguồn, chốt kiểu khóa ở E03-DOC-01b, đồng bộ hợp đồng với E-04",
+  "kind": "open"
+ },
+ {
+  "epic": "E-03",
+  "n": "12",
+  "spec": "TRD_NEGOTIATED_LOT_LIST_SPEC §4.2 D-1, api-list `LOT_SECTION_LIST`, TRD_QUANTITY_LIST (E-02 S-011)",
+  "gap": "S-014 tìm khớp một phần mã lot hoặc tên hàng (chữ Nhật, Việt); api-list ghi `q` là mã lot; S-011 chỉ tìm mã lot",
+  "xl": "Để mở: nghĩa của `q` theo từng màn chốt ở E02-DOC-01b (đã thêm dòng); E03-FE-01 ghi đúng nghĩa của S-014",
+  "kind": "open"
+ },
+ {
+  "epic": "E-03",
+  "n": "13",
+  "spec": "TRD_NEGOTIATED_CREATE_TECH §4.1, TRD_AUCTION_RECORD_TECH §4.1 so với S-015 E-10, S-019 E-8, TRD_DB §4.1",
+  "gap": "TECH chỉ yêu cầu `unitPrice` là số nguyên lớn hơn 0 (không có trần) trong khi cột là INTEGER và SPEC chặn ở 2.147.483.647; giá lớn hơn sẽ thành lỗi ép kiểu DB (500) thay vì VALIDATION",
+  "xl": "Dự kiến sửa thiết kế (PREMISE, mục Sửa): thêm trần vào validation route và RPC; không thêm trần nghiệp vụ nào ngoài giới hạn kiểu cột; ghi ở E03-BE-02a, E03-BE-03",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-03",
+  "n": "14",
+  "spec": "TRD_CONFIRMATION_LIST_SPEC (bảng trạng thái) so với D-1 và Event",
+  "gap": "Bảng trạng thái và ảnh chỉ có tab Chờ chốt và Đã từ chối hôm nay, còn D-1, §4.3 và Event M-3 có tab thứ ba Đã chốt hôm nay",
+  "xl": "Để mở: spec thiếu trạng thái và ảnh cho tab thứ ba; backlog theo D-1 (E03-FE-03a)",
+  "kind": "open"
+ },
+ {
+  "epic": "E-03",
+  "n": "15",
+  "spec": "TRD_NEGOTIATED_CREATE_TECH §4.2 #2 và §5 (bảng đồng thời)",
+  "gap": "\"Hai lần gửi đua cùng khóa nối đuôi qua khóa lot\" chỉ đúng khi cùng lot; cùng người và cùng khóa nhưng lot khác thì không nối đuôi và tranh UQ lúc INSERT (§5 đã ghi 23505 thành CONFLICT). Suy luận từ hợp đồng khóa, chưa chạy trên DB thật",
+  "xl": "Đã phản ánh vào DoD: E03-BE-02c ánh xạ đúng vi phạm UQ idempotency thành 409 CONFLICT và rollback giữ chỗ; ca kiểm ở E03-QA-03",
+  "kind": "other"
+ },
+ {
+  "epic": "E-03",
+  "n": "16",
+  "spec": "TRD_DB (`service_role`, phần thu quyền), ADJ_LOCKED_DAY_GUARD_TECH",
+  "gap": "TRD_DB giữ thu quyền truncate và delete khỏi `service_role` (từ prototype M5), nhưng chưa nói issue nào làm",
+  "xl": "Giả định (dự kiến PREMISE): thu quyền thuộc migration bảng (E03-DB-01); trigger của E-04 bảo vệ sáu trường khi đã chốt",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-04",
+  "n": "1",
+  "spec": "README trade-adjustment, api-design/_index",
+  "gap": "API Design `{API_ID}_API.md` ghi \"viết ở LAB-5\", chưa có file",
+  "xl": "Dự kiến sửa thiết kế (PREMISE, mục Thêm): issue E04-DOC-01 (D8)",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-04",
+  "n": "2",
+  "spec": "ADJ_ADJUSTMENT_DECIDE_TECH §4.2 và api-list `ADJ_REQUEST_CREATE`, so với §4.7 #1",
+  "gap": "Response tạo yêu cầu: §4.2 và api-list có `request_code`, §4.7 #1 chỉ ghi `{ok, id, status}`; TECH ghi chốt ở LAB-5 (DQ-4)",
+  "xl": "Để mở: chốt khóa response ở E04-DOC-01a",
+  "kind": "open"
+ },
+ {
+  "epic": "E-04",
+  "n": "3",
+  "spec": "ADJ_ADJUSTMENT_REQUEST_SPEC (thông báo cần thêm), Q34 (REQ-001 §8, đã chốt)",
+  "gap": "Q34 chặn điều chỉnh tiếp khi giao dịch đã đảo toàn bộ, nhưng chưa có mã thông báo `M_ADJ_*` riêng; TECH chỉ có INVALID_STATE chung",
+  "xl": "Để mở: chốt mã lỗi và thông báo ở E04-DOC-01a; backlog dùng INVALID_STATE (E04-BE-01)",
+  "kind": "open"
+ },
+ {
+  "epic": "E-04",
+  "n": "4",
+  "spec": "ADJ_ADJUSTMENT_DECIDE_TECH §4.1 #2, Q31",
+  "gap": "Kiểm tiền tố đường dẫn chứng cứ còn `[ĐIỀN]` theo tên bucket, phụ thuộc Q31 (chính sách lưu trữ)",
+  "xl": "Để mở: chốt ở E04-DOC-01a; Q31 chờ khách; FE không dọn tệp đã tải lên khi người dùng xóa dòng",
+  "kind": "open"
+ },
+ {
+  "epic": "E-04",
+  "n": "5",
+  "spec": "ADJ_ADJUSTMENT_DECIDE_TECH §4.3 (FOR NO KEY UPDATE), TRD_CONFIRM_TECH §4.2 (FOR UPDATE)",
+  "gap": "Hai kiểu khóa hàng `trades` cho các RPC đổi trạng thái; cùng chỗ hở số 11 của E-03",
+  "xl": "Để mở: chốt ở E04-DOC-01b cùng E03-DOC-01b; DoD E04-BE-03a, 03d dùng FOR NO KEY UPDATE theo TECH ADJ",
+  "kind": "open"
+ },
+ {
+  "epic": "E-04",
+  "n": "6",
+  "spec": "ADJ_ADJUSTMENT_DECIDE_TECH §4.4, E-02 (số dư lot)",
+  "gap": "Q36 đã chốt ở REQ-001 §8 (lot đã bán quay về công khai khi hoàn số lượng) nhưng TECH và LOT_DB còn ghi không có chiều này; riêng trần `initial_qty` khi F-009 cộng dương rồi hoàn chưa chốt (E02-CLR-02)",
+  "xl": "Đồng bộ nguồn theo REQ-001 (dự kiến PREMISE, mục Sửa); trần chờ quyết định E02-CLR-02; E04-BE-03b ghi chỗ hở",
+  "kind": "other"
+ },
+ {
+  "epic": "E-04",
+  "n": "7",
+  "spec": "Q17, Q57 (REQ-001 §8), ADJ_ADJUSTMENT_DECIDE_TECH §4.4",
+  "gap": "Q17 và Q57 đã `resolved` (chờ khách xác nhận): không kiểm lịch 休市日; DECIDE §4.4 chỉ ghi \"chưa được kiểm\"",
+  "xl": "Không phải chỗ hở: thực hiện quyết định đã chốt (sửa sau review Codex R17); chỉ ghi nhận DECIDE §4.4 dùng chữ \"chưa\" lỗi thời",
+  "kind": "other"
+ },
+ {
+  "epic": "E-04",
+  "n": "8",
+  "spec": "ADJ_ADJUSTMENT_APPROVAL_SPEC OQ-4, OQ-5, OQ-6 (S-022 OQ-4)",
+  "gap": "Tải thêm bảng J (20 dòng), số dòng danh sách tối đa 100 không có Tải thêm, danh sách chỉ pending không có lịch sử",
+  "xl": "Giả định (dự kiến PREMISE): theo A của SPEC (20 dòng tải tại chỗ, tối đa 100, chỉ pending); chờ khách",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-04",
+  "n": "9",
+  "spec": "ADJ_ADJUSTMENT_APPROVAL_SPEC §4.2, ADJ_DB §4.1",
+  "gap": "SPEC ghi rõ không nhận ghi chú khi phê duyệt, DB chỉ có `reject_reason`",
+  "xl": "Không phải giả định: thực hiện đúng spec (sửa sau review Codex R17); ghi ở E04-FE-02c",
+  "kind": "other"
+ },
+ {
+  "epic": "E-04",
+  "n": "10",
+  "spec": "ADJ_ADJUSTMENT_APPROVAL_SPEC (G-4), api-list `ADJ_REQUEST_GET`, ADR-013 R7",
+  "gap": "Cảnh báo 参加上限 ở màn duyệt: `impact.participation` dùng `participation_used_jpy` chưa gồm bút toán đang duyệt, cộng thêm `amount_delta`; chỉ cảnh báo, không chặn (ADR-013 R7). Công thức dùng chung với E-01, E-03",
+  "xl": "Để mở: hợp đồng đã có; E04-BE-02 dựa vào E03-BE-01; chi tiết dạng khóa chốt ở E04-DOC-01a",
+  "kind": "open"
+ },
+ {
+  "epic": "E-04",
+  "n": "11",
+  "spec": "Q-status: ADJ_DB §8, SPEC OQ, REQ-001 §8",
+  "gap": "Một số Q còn ghi `open` ở ADJ_DB và SPEC trong khi REQ-001 §8 đã `resolved` (Q6, Q14, Q18, Q20, Q33, Q34, Q47)",
+  "xl": "Để mở: lệch ghi chép, backlog theo REQ-001 §8",
+  "kind": "open"
+ },
+ {
+  "epic": "E-04",
+  "n": "12",
+  "spec": "ADJ_LOCKED_DAY_GUARD_TECH §4.2, §4.3",
+  "gap": "Trigger lớp 2 raise nên không ghi audit được (rollback); chỉ có log mức WARN. Hai trường hợp khác nhau cho giao dịch confirmed bị sửa số liệu: ngày reopened → DAY_LOCKED, ngày open → INVALID_STATE",
+  "xl": "Đã phản ánh vào DoD: E04-DB-04 (log `guard.trigger_blocked`, hai nhánh hint) và E04-QA-02",
+  "kind": "other"
+ },
+ {
+  "epic": "E-04",
+  "n": "13",
+  "spec": "Q20 (REQ-001 §8) và ADJ_LOCKED_DAY_BLOCK_SPEC (biến thể reopened)",
+  "gap": "Q20 đã chốt: ngày reopened vẫn qua điều chỉnh; SPEC S-024 còn biến thể `M_ADJ_011` cho ngày reopened. Cần giữ biến thể",
+  "xl": "Giữ nguyên theo SPEC (E04-FE-03); không phát hiện mâu thuẫn, ghi để Codex kiểm",
+  "kind": "other"
+ },
+ {
+  "epic": "E-04",
+  "n": "14",
+  "spec": "ADJ_ADJUSTMENT_DECIDE_TECH §4.5 #3, #4, INC_POST_LOCK_DELTA_TECH §4.1",
+  "gap": "Điều kiện tạo delta: \"giao dịch có dòng original\", không phải `is_post_lock`; ngày gốc reopened đã có original vẫn cần delta; logic delta thuộc E-06",
+  "xl": "Phản ánh vào E04-BE-03d (phụ thuộc E06-INC-DB, E06-INC-POST-LOCK-DELTA); thứ tự khóa advisory incentive sau ngày, trước audit",
+  "kind": "other"
+ },
+ {
+  "epic": "E-04",
+  "n": "15",
+  "spec": "ADJ_DB §4.2 (dòng `amount_delta`)",
+  "gap": "`amount_delta` NUMERIC(18,3), không làm tròn ở DB; `floor` chỉ ở lớp hiển thị và báo cáo (Q26, QD-2); Q33 chốt cách tính delta thưởng thuộc E-06",
+  "xl": "Không phải giả định: thực hiện đúng ADJ_DB (sửa sau review Codex R17); hiển thị làm tròn thuộc các màn E-04 và báo cáo",
+  "kind": "other"
+ },
+ {
+  "epic": "E-04",
+  "n": "16",
+  "spec": "TRD_DB (trigger `trades_guard_locked_day`), REQ-001 FR-TRD-007 AC7 và Q85, ADJ_LOCKED_DAY_GUARD_TECH §4.2",
+  "gap": "TRD_DB chặn INSERT `trades` vào ngày `reopened` của hôm qua trở về trước (chỉ hôm nay được); GUARD §4.2 không liệt kê nhánh này",
+  "xl": "Dự kiến sửa thiết kế (PREMISE, mục Sửa): bổ sung nhánh vào trigger E04-DB-04 theo TRD_DB và Q85; ghi ở E04-DOC-01b",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-04",
+  "n": "17",
+  "spec": "REQUEST §4.2 (G-5, G-7), ADJ_DB §4.2",
+  "gap": "Miền yêu cầu cho phép qty tới 10^9 và đơn giá tới 2.147.483.647, tích tới khoảng 2,1 nhân 10^18, vượt miền `amount_delta` NUMERIC(18,3) (phần nguyên tối đa khoảng 10^15) nên có thể thành 500",
+  "xl": "Để mở: chốt cách xử lý ở E04-DOC-01a (không tự đặt trần mới); ca biên ở E04-BE-01, E04-DB-02",
+  "kind": "open"
+ },
+ {
+  "epic": "E-04",
+  "n": "18",
+  "spec": "REQUEST §6 (J-1..J-8), APPROVAL §6 (D-1..D-11)",
+  "gap": "S-022 cần `requested_at` giảm dần, S-023 cần tăng dần; `originDayStatus=locked/open` là nhóm hai trạng thái; api-list chưa nêu thứ tự",
+  "xl": "Để mở: chốt ở E04-DOC-01a; DoD ở E04-BE-02, E04-FE-02a",
+  "kind": "open"
+ },
+ {
+  "epic": "E-04",
+  "n": "19",
+  "spec": "ADJ_DB §4.1 (`request_code`)",
+  "gap": "Giá trị mặc định dùng `lpad(...,6,'0')` cắt số dài hơn 6 ký tự (1000000 thành 100000) trong khi mô tả nói thêm chữ số khi vượt 999999",
+  "xl": "Dự kiến sửa thiết kế (PREMISE, mục Sửa): default chỉ thêm số 0 khi thiếu; ca biên ở E04-DB-01",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-04",
+  "n": "20",
+  "spec": "LOT_DB §6 (`lot_release_qty`), E02-BE-08 so với ADJ_ADJUSTMENT_DECIDE_TECH §4.5 #2",
+  "gap": "Helper ghi `p_qty = trades.qty` cho giao dịch pending; điều chỉnh gọi với `−qty_delta` hoặc `qty_before` của giao dịch confirmed",
+  "xl": "Dự kiến sửa thiết kế (PREMISE, mục Sửa): hợp đồng helper nhận số lượng dương do RPC tính, luật trạng thái thuộc RPC gọi; đã sửa E02-BE-08, chốt ở E04-DOC-01b và E02-DOC-01b",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-04",
+  "n": "21",
+  "spec": "ADJ_ADJUSTMENT_DECIDE_TECH §4.5, §4.7 so với INC_POST_LOCK_DELTA_TECH §4.5",
+  "gap": "Response và audit duyệt: DECIDE ghi `incentive_delta_jpy`, response không có phần thưởng; DELTA ghi `incentive {status, incentive_jpy, rule_version_id}` và audit có `incentive_delta {…}`; cả hai cập nhật 14/10/2026",
+  "xl": "Để mở: chốt ở E04-DOC-01b; E04-BE-03d trả kết quả có cấu trúc cho E04-BE-03c",
+  "kind": "open"
+ },
+ {
+  "epic": "E-04",
+  "n": "22",
+  "spec": "ADJ_ADJUSTMENT_DECIDE_TECH §4.4, §4.5 #6 so với INC_POST_LOCK_DELTA_TECH (lỗi NO_OPEN_BUSINESS_DAY)",
+  "gap": "DECIDE chỉ trả object; DELTA ghi audit `guard.write_blocked` rồi trả object; entity là `adjustment_request` (DELTA) hay `trade_adjustment_request` (DECIDE)",
+  "xl": "Để mở: chốt ở E04-DOC-01b",
+  "kind": "open"
+ },
+ {
+  "epic": "E-04",
+  "n": "23",
+  "spec": "ADJ_LOCKED_DAY_GUARD_TECH §4.4, error-codes §1, ADJ_LOCKED_DAY_BLOCK_SPEC E-1, E-2",
+  "gap": "`hint` không hợp lệ hoặc `details` không parse được: GUARD ghi 500 INTERNAL_ERROR; BLOCK ghi fallback ngày từ màn chủ khi params rỗng",
+  "xl": "Để mở: chốt ở E04-DOC-01b cùng E10-API-ERROR-MAPPING",
+  "kind": "open"
+ },
+ {
+  "epic": "E-05",
+  "n": "1",
+  "spec": "README daily-closing, api-design/_index",
+  "gap": "API Design `{API_ID}_API.md` ghi \"viết ở LAB-5\", chưa có file",
+  "xl": "Dự kiến sửa thiết kế (PREMISE, mục Thêm): issue E05-DOC-01 (D8)",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-05",
+  "n": "2",
+  "spec": "REQ-001 §8 Q32 (resolved, chờ khách xác nhận) so với CLS_DB §4.1 và \"Câu hỏi mở\", CLS_DISPUTE_LIST_SPEC §6 A1 và OQ-1, CLS_DISPUTE_DETAIL_SPEC §6 A2, F-2, F-3",
+  "gap": "Q32 đã trả lời \"gắn vào ngày mở kế tiếp, có tham chiếu giao dịch gốc\". Spec vẫn thiết kế chặn tạo khi ngày hiện tại khóa (DAY_LOCKED), ghi Q32 còn `open`, và không có cột hay bảng tham chiếu giao dịch (đối tượng là văn bản tự do, F-2 chỉ trích mã TX-NNNNNN)",
+  "xl": "Tạo issue làm rõ: E05-CLR-02",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-05",
+  "n": "3",
+  "spec": "REQ-001 §8 Q21 (open, giao Tech Lead chốt ở LAB-5), ADR-015 §4, CLS_DAY_CLOSE_TECH",
+  "gap": "Cần cảnh báo \"còn giao dịch chờ chốt, chưa chốt sổ\" trước giờ chốt nhưng không có job, loại sự kiện hay màn nào định nghĩa",
+  "xl": "Tạo issue làm rõ: E05-CLR-01",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-05",
+  "n": "4",
+  "spec": "CLS_DAILY_RECONCILIATION_SPEC §4.3, §6 A1, `database-design/_index.md` §5 (`rpc_reconciliation_overview`)",
+  "gap": "Không có TECH riêng cho `rpc_reconciliation_overview`: quy tắc chọn ngày mặc định, tab, keyset, các khóa `summary` chỉ ở SPEC; khóa response là đề xuất (DQ-4, OQ-12)",
+  "xl": "Để mở: chốt hợp đồng ở E05-DOC-01a; DoD E05-BE-02a, 02b lấy từ SPEC",
+  "kind": "open"
+ },
+ {
+  "epic": "E-05",
+  "n": "5",
+  "spec": "CLS_DAY_CLOSE_TECH 4.4, 4.5; CLS_DAY_REOPEN_TECH 4.6; CLS_DISPUTE_*_SPEC §4.3 (DQ-4)",
+  "gap": "Tên khóa response và request của 10 API đều là \"đề xuất, chốt ở LAB-5\"",
+  "xl": "Để mở: chốt ở E05-DOC-01a, 01b, 01c",
+  "kind": "open"
+ },
+ {
+  "epic": "E-05",
+  "n": "6",
+  "spec": "S-025 OQ-1, OQ-6, OQ-9, OQ-10; CLS_DAY_CLOSE_TECH (Q14, Q21, Q22); CLS_DAY_REOPEN_TECH (Q1, Q14, Q22, Q23, Q-R3); S-027 OQ-6",
+  "gap": "Còn ghi `open` hoặc \"giả định\" cho Q1, Q14, Q22, Q23, Q37, Q52 trong khi REQ-001 §8 đã `resolved` (chờ khách xác nhận): N = 3, giữ bản gốc cộng delta, đồng ý mở rộng loại sự kiện, ≥ 2 ROLE-005, mọi ROLE-007 active, không buộc chốt theo thứ tự",
+  "xl": "Để mở: lệch ghi chép, backlog theo REQ-001 §8",
+  "kind": "open"
+ },
+ {
+  "epic": "E-05",
+  "n": "7",
+  "spec": "CLS_DAY_CLOSE_TECH §5 (RPC giao dịch khóa `trades` FOR NO KEY UPDATE) so với TRD_CONFIRM_TECH §4.2 (FOR UPDATE)",
+  "gap": "Nguồn thứ ba cho kiểu khóa hàng `trades` của nhóm RPC giao dịch, cùng chỗ hở số 11 của E-03 và số 5 của E-04. TECH chốt sổ nêu thứ tự khóa của các RPC giao dịch theo FOR NO KEY UPDATE",
+  "xl": "Để mở: chốt cùng ở E03-DOC-01b và E04-DOC-01b; E05 không khóa `trades` (chỉ đếm), nên không bị ảnh hưởng trực tiếp",
+  "kind": "open"
+ },
+ {
+  "epic": "E-05",
+  "n": "8",
+  "spec": "CORE_DB (bảng `rule_versions`, danh mục `params`), CLS_DAY_REOPEN_TECH 4.2",
+  "gap": "`reopen_window_days` mặc định 3 đã ghi ở CORE_DB (cùng Q1 đã chốt); giá trị hạt giống thuộc bản `market_rule` do E-10 và E-06 quản",
+  "xl": "Không phải chỗ hở: E05-BE-04 đọc tham số, thiếu thì từ chối an toàn và ghi `ops_alerts`; hạt giống ghi ở E10",
+  "kind": "other"
+ },
+ {
+  "epic": "E-05",
+  "n": "9",
+  "spec": "ADR-015 R6, ADR-005 R9, Q23 (resolved)",
+  "gap": "Điều kiện nhân sự (≥ 2 ROLE-005, ≥ 1 ROLE-003 mỗi ca chốt) là điều kiện vận hành, hệ thống không tự kiểm",
+  "xl": "Để mở và vì sao: không có hành vi phần mềm nên không thành issue; đưa vào rủi ro ở báo cáo tiến độ (ROLE-003 vắng thì không chốt được)",
+  "kind": "open"
+ },
+ {
+  "epic": "E-05",
+  "n": "10",
+  "spec": "CLS_DAILY_RECONCILIATION_SPEC OQ-7; CLS_DISPUTE_DETAIL_SPEC OQ-5",
+  "gap": "Không có hộp thoại xác nhận khi duyệt 締め再開 (OQ-7) và khi đóng tranh chấp (OQ-5); chưa có mã message",
+  "xl": "Giả định (dự kiến PREMISE): theo spec, không có hộp thoại; chờ khách",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-05",
+  "n": "11",
+  "spec": "CLS_DISPUTE_DETAIL_SPEC OQ-1, §6 \"Khác LAB-1\"",
+  "gap": "Có cần sửa nguyên nhân, người chịu trách nhiệm, ngày dự kiến sau khi tạo (LAB-1 A-1)",
+  "xl": "Giả định (dự kiến PREMISE): trường gốc chỉ đọc, cập nhật chỉ thêm ghi chú (theo API); chờ khách",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-05",
+  "n": "12",
+  "spec": "CLS_DISPUTE_DETAIL_SPEC (Q31), CLS_DB `evidence_paths`",
+  "gap": "Bucket, thời hạn lưu, lưu trữ lạnh chứng cứ chưa chốt (Q31); kiểm đường dẫn thuộc người gọi còn `[ĐIỀN]`",
+  "xl": "Để mở: cùng E04-DOC-01a; ghi ở E05-DOC-01c, E05-BE-06",
+  "kind": "open"
+ },
+ {
+  "epic": "E-05",
+  "n": "13",
+  "spec": "CLS_DAILY_RECONCILIATION_SPEC §2 (ảnh), §6 bảng trạng thái",
+  "gap": "Trạng thái `reopened` của S-025 không có ảnh wireframe; chỉ mô tả bằng bảng \"Hiển thị theo trạng thái ngày\"",
+  "xl": "Để mở: DoD E05-FE-01a theo bảng spec; không ảnh để đối chiếu thị giác",
+  "kind": "open"
+ },
+ {
+  "epic": "E-05",
+  "n": "14",
+  "spec": "CLS_REOPEN_DECIDE (api-list 0.6.0 bỏ `DAY_REOPEN_NOT_ALLOWED`, 0.7.0 và 0.8.0 thêm lại)",
+  "gap": "Lịch sử sửa nguồn: bản 0.6.0 nói CLS_REOPEN_DECIDE không có mã này, nay có cho nhánh \"ngày sau chưa open\" (N vẫn không kiểm lại lúc duyệt)",
+  "xl": "Đã phản ánh: E05-BE-05 và E05-DOC-01b ghi hai nhánh; không cần quyết định thêm",
+  "kind": "other"
+ },
+ {
+  "epic": "E-05",
+  "n": "15",
+  "spec": "CLS_DB §4.1, Trigger (`disputes_guard_closed`), CLS_DB §4.2",
+  "gap": "`rpc_dispute_update` chèn vào `dispute_updates` mà không UPDATE `disputes`, nên trigger đóng trên bảng cha không chặn được update đua với close; CLS_DB chỉ nói \"RPC chặn khi closed\", không nêu cơ chế khóa",
+  "xl": "Dự kiến sửa thiết kế (PREMISE, mục Sửa): hai RPC cùng khóa hàng `disputes` rồi kiểm status; ghi ở E05-BE-07, 08, DOC-01c; ca đua ở E05-QA-04",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-05",
+  "n": "16",
+  "spec": "CLS_DAILY_RECONCILIATION_SPEC §4.3 (H-12), §6 \"Nội dung tab\"",
+  "gap": "Chỉ tab trades có keyset theo id tăng dần; các tab deliveries, exceptions, disputes (tab 3 có hai bảng, mỗi bảng \"Tải thêm\") chưa nêu khóa sắp xếp và cursor riêng",
+  "xl": "Để mở: chốt ở E05-DOC-01a; DoD E05-FE-01b ghi cursor và nút riêng từng bảng",
+  "kind": "open"
+ },
+ {
+  "epic": "E-05",
+  "n": "17",
+  "spec": "OUTBOX_DB §4.1.1 (`dispute_opened`), CLS_DISPUTE_DETAIL_SPEC §6 A4",
+  "gap": "Cờ Critical và lượt thử của `dispute_opened` phụ thuộc cấu hình thông báo (Critical thì 4, thường thì 1); spec tranh chấp không nêu",
+  "xl": "Để mở: ghi tường minh ở E05-BE-06, chốt cùng E-08",
+  "kind": "open"
+ },
+ {
+  "epic": "E-06",
+  "n": "1",
+  "spec": "README incentive, api-design/_index",
+  "gap": "API Design `{API_ID}_API.md` ghi \"viết ở LAB-5\", chưa có file",
+  "xl": "Dự kiến sửa thiết kế (PREMISE, mục Thêm): issue E06-DOC-01 (D8)",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-06",
+  "n": "2",
+  "spec": "REQ-001 §8 Q45 (resolved, chờ khách xác nhận: \"không hiện dòng thưởng = 0, chỉ liệt kê giao dịch đủ điều kiện\") so với INC_INCENTIVE_CALCULATE_TECH §4.4 bước 6, INC_DB §4.1, INC_CALCULATION_RESULT_SPEC (E-3, G-1, G-8, Q45 còn open), INC_POST_LOCK_DELTA_TECH §4.4 bước 3 và Q56",
+  "gap": "Thiết kế ghi dòng `original` bằng 0 cho giao dịch không đúng hạn và hiện thẻ, chip lọc \"Không đúng hạn\"; Q56 (đã chốt) cần dòng `original` để ghi `delta` 0. Q45 hỏi hiển thị ở báo cáo, không quyết định bỏ lưu dòng 0",
+  "xl": "Tạo issue làm rõ: E06-CLR-01 (sau review Codex thu hẹp: Q45 hỏi hiển thị ở báo cáo, dòng `original` bằng 0 vẫn lưu theo baseline vì Q56 cần nó)",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-06",
+  "n": "3",
+  "spec": "REQ-001 §8 Q30 (resolved, chờ khách xác nhận: tham số vận hành 休市日 và N ngày 締め再開 tách riêng, không tính vào hạn mức 4 lần mỗi năm) so với INC_RULE_VERSIONING_TECH §5 (Q30 còn mở), S-030 H-3, H-4, A3, Q17",
+  "gap": "Spec vẫn để `market_holidays` và `reopen_window_days` trong `params` của `market_rule` và đếm chung vào hạn mức",
+  "xl": "Tạo issue làm rõ: E06-CLR-02",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-06",
+  "n": "4",
+  "spec": "S-028 OQ-6, OQ-1..; INC_INCENTIVE_CALCULATE_TECH (Q14, Q25, Q26, Q45, Q46); INC_DB (Q14, Q25, Q26, Q33, Q56, Q46, Q45); S-029, S-030 (Q15, Q58, Q59)",
+  "gap": "Còn ghi `open` hoặc \"chờ\" cho `M_INC_016..019` (nay đã có ở error-codes), Q14, Q25, Q26, Q33, Q46, Q56, Q81, Q82, Q83, Q15, Q58, Q59 trong khi REQ-001 §8 đã `resolved`",
+  "xl": "Để mở: lệch ghi chép, backlog theo REQ-001 §8",
+  "kind": "open"
+ },
+ {
+  "epic": "E-06",
+  "n": "5",
+  "spec": "CORE_DB §4.4 (\"Trigger / hàm\": `active_rule_version`, `job_rule_version_activate`, `rule_versions_guard`, hai chỉ mục) so với INC_RULE_VERSIONING_TECH §4.6, §4.7",
+  "gap": "Hai nguồn cùng mô tả hàm tra phiên bản và job kích hoạt",
+  "xl": "Giả định (dự kiến PREMISE): bảng, trigger, chỉ mục, `active_rule_version()` thuộc E-10; logic job kích hoạt, bốn RPC và hợp đồng nghiệp vụ thuộc E-06; khi hai nguồn lệch thì ghi cả hai phía và chốt ở DOC (không áp quy tắc \"theo TECH\" cho mọi trường hợp)",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-06",
+  "n": "6",
+  "spec": "INC_POST_LOCK_DELTA_TECH §4.5 so với ADJ_ADJUSTMENT_DECIDE_TECH §4.5, §4.7",
+  "gap": "Response và audit duyệt: DELTA trả `incentive {status, incentive_jpy, rule_version_id}` và audit `incentive_delta {…}`; DECIDE ghi `incentive_delta_jpy` (cùng chỗ hở 21 của E-04)",
+  "xl": "Để mở: chốt ở E04-DOC-01b và E06-DOC-01a; E06-BE-04 trả kết quả có cấu trúc cho E04-BE-03c",
+  "kind": "open"
+ },
+ {
+  "epic": "E-06",
+  "n": "7",
+  "spec": "S-028 OQ-5, G-11",
+  "gap": "Wireframe hiện `qty × unit_price` lúc khóa nhưng `incentive_results` chỉ lưu `base_amount`",
+  "xl": "Giả định (dự kiến PREMISE): chỉ hiện `base_amount` theo spec; chờ INC_DB",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-06",
+  "n": "8",
+  "spec": "S-029 OQ-4, G-6",
+  "gap": "Ngoài trục (chờ duyệt, bị từ chối) không có \"Tải thêm\"; bản `rejected` tích lũy",
+  "xl": "Giả định (dự kiến PREMISE): tối đa 20 dòng như spec; chờ Lead",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-06",
+  "n": "9",
+  "spec": "S-030 OQ-6, OQ-7, G-3, G-6, G-7; INC_RULE_VERSIONING_TECH §4.3",
+  "gap": "Không có hộp xác nhận khi duyệt và khi hủy; rollback: S-030 chỉ cho từ bản `superseded` nhưng RPC chấp nhận `active` và `superseded`",
+  "xl": "Giả định (dự kiến PREMISE): theo spec ở màn (chỉ `superseded`), RPC theo TECH; chờ khách",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-06",
+  "n": "10",
+  "spec": "INC_RULE_VERSIONING_TECH Q-RUL-T2",
+  "gap": "Lịch dự phòng khi lần chạy 00:05 JST của job kích hoạt lỗi (chạy lại mỗi giờ?) còn mở; chỉ có cảnh báo `job_failed`",
+  "xl": "Để mở: chốt ở E06-DOC-01b",
+  "kind": "open"
+ },
+ {
+  "epic": "E-06",
+  "n": "11",
+  "spec": "S-028 Q-INC-R1 (REQ-001 Q81, resolved)",
+  "gap": "Sau chạy lại thành công phải nhắc ROLE-005 sinh lại báo cáo tay; chưa có mã message cho lời nhắc",
+  "xl": "Để mở: nội dung nhắc chốt ở E06-DOC-01a, hiển thị ở E06-FE-01c",
+  "kind": "open"
+ },
+ {
+  "epic": "E-06",
+  "n": "12",
+  "spec": "S-029 Q23, S-030 Q23 (resolved), ADR-003",
+  "gap": "Số ROLE-006 tối thiểu mỗi ca để duyệt hai người là điều kiện vận hành, hệ thống không tự kiểm",
+  "xl": "Để mở và vì sao: không có hành vi phần mềm nên không thành issue; đưa vào rủi ro ở báo cáo tiến độ. Lưu ý: Q23 (REQ-001) chỉ chốt ≥ 2 ROLE-005 và ≥ 1 ROLE-003 ở ca chốt sổ, chưa trả lời số ROLE-006 tối thiểu",
+  "kind": "open"
+ },
+ {
+  "epic": "E-06",
+  "n": "13",
+  "spec": "REQ-001 §8 Q90, Q91 (open)",
+  "gap": "Q90: làm tròn từng dòng hay tổng ở báo cáo (RPA_DB); Q91: phiên bản tỷ lệ và 業務規程 có phải loại bản ghi di trú",
+  "xl": "Để mở: thuộc E-09 và E-11, không thuộc E-06; nhưng Q91 ảnh hưởng việc nạp phiên bản trước go-live và 2 trong 4 lượt năm đầu nếu nhập tay, nên ghi ở rủi ro",
+  "kind": "open"
+ },
+ {
+  "epic": "E-06",
+  "n": "14",
+  "spec": "INC_INCENTIVE_CALCULATE_TECH §4.1, INC_DB (RLS)",
+  "gap": "Hàm `worker_incentive_run_begin`, `worker_incentive_run_fail` do worker (service role) gọi; ai viết vòng lặp worker (OUTBOX_DB, NTF) không nêu rõ",
+  "xl": "Giả định (dự kiến PREMISE): hàm thuộc E-06, vòng lặp worker dispatch thuộc E-08 (`E08-BE-08`), bảng và trạng thái outbox thuộc E-10; hợp đồng ở E06-DOC-01a",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-06",
+  "n": "15",
+  "spec": "INC_RULE_VERSIONING_TECH §3, §4.4, FR-INC-002 AC4",
+  "gap": "Một số bản `scheduled` bị hủy sau khi duyệt vẫn tính vào hạn mức (Q59); dễ gây hiểu nhầm là \"trả lượt\" ở màn",
+  "xl": "Đã phản ánh: DoD E06-BE-07, E06-BE-11 (hủy) ghi rõ; không cần quyết định thêm",
+  "kind": "other"
+ },
+ {
+  "epic": "E-06",
+  "n": "16",
+  "spec": "INC_CALCULATION_RESULT_SPEC §6 A2, INC_INCENTIVE_CALCULATE_TECH §4.1 bước 2b, INC_DB §4.2, REQ-001 Q82",
+  "gap": "Điều kiện dòng `running` bị coi là treo: S-028 A2 ghi ngưỡng đề xuất 15 phút chỉ theo tuổi; TECH ghi quá 5 phút và outbox không còn `retry_wait`; INC_DB chỉ nêu tuổi; Q82 chỉ chốt con số 5 phút",
+  "xl": "Để mở: chốt một điều kiện dùng chung ở E06-DOC-01a; BE-01a, BE-02, BE-03 dùng cùng điều kiện",
+  "kind": "open"
+ },
+ {
+  "epic": "E-06",
+  "n": "17",
+  "spec": "INC_POST_LOCK_DELTA_TECH §4.3 (bảng Error và Detail)",
+  "gap": "Bảng Error có điều kiện `confirmed_at` không muộn hơn `locked_at` của lần khóa gần nhất, bước Detail không ghi; giao dịch xác nhận sau lần khóa đó (ví dụ lúc ngày reopened) chưa có trạng thái",
+  "xl": "Để mở: chốt ở E06-DOC-01a; ghi ở E06-BE-04",
+  "kind": "open"
+ },
+ {
+  "epic": "E-06",
+  "n": "18",
+  "spec": "INC_POST_LOCK_DELTA_SPEC E-5 và §6 A3, F-3",
+  "gap": "E-5 \\\"thiếu tỷ lệ gốc\\\" đếm mọi bút toán không có delta, còn A3 và F-3 tách thiếu tỷ lệ khỏi chờ job bù (deferred)",
+  "xl": "Dự kiến sửa thiết kế (PREMISE, mục Sửa): E-5 và banner chỉ đếm `rate_missing`, loại `deferred`; ghi ở E06-BE-05, E06-FE-04",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-06",
+  "n": "19",
+  "spec": "api-list INC_DELTA_LIST (query `dayId`) so với INC_POST_LOCK_DELTA_SPEC §4.2, §4.3",
+  "gap": "api-list nhận `dayId`; S-031 không nhận ngày",
+  "xl": "Để mở: chốt API bỏ qua hay từ chối `dayId` ở E06-DOC-01a",
+  "kind": "open"
+ },
+ {
+  "epic": "E-06",
+  "n": "20",
+  "spec": "INC_RULE_VERSIONING_TECH §4.5, §5 (bảng đồng thời); INC_INCENTIVE_CALCULATE_TECH §4.7, §5",
+  "gap": "Bảng đồng thời ghi bên sau `INVALID_STATE` cho duyệt đua với hủy và cho hai lần chạy lại, nhưng bảng lỗi cho phép hủy bản `scheduled` tương lai và cho chạy lại ở `rate_missing`",
+  "xl": "Để mở: ma trận theo thứ tự thao tác ở E06-QA-03, chốt ở E06-DOC-01a, 01b",
+  "kind": "open"
+ },
+ {
+  "epic": "E-06",
+  "n": "21",
+  "spec": "REQ-001 FR-INC-002 AC6, Q17 so với Q30",
+  "gap": "REQ-001 tự mâu thuẫn: lịch 休市日 là tham số `market_rule` tiêu lượt (AC6, Q17) hay tách riêng không tiêu lượt (Q30)",
+  "xl": "Tạo issue làm rõ: E06-CLR-02",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-06",
+  "n": "22",
+  "spec": "INC_RATE_VERSION_DETAIL_SPEC H-5, INC_RULE_VERSIONING_TECH §5, CORE_DB",
+  "gap": "`default_participation_limit_jpy` cho phép null (không có mặc định) nhưng H-5 chỉ mô tả số nguyên không âm",
+  "xl": "Để mở: chốt cách nhập và hiển thị null (không đổi thành 0) ở E06-DOC-01b",
+  "kind": "open"
+ },
+ {
+  "epic": "E-06",
+  "n": "23",
+  "spec": "INC_RULE_VERSIONING_TECH §4.4 (CONFLICT `params`), error-codes M_INC_015",
+  "gap": "`CONFLICT` từ chỉ mục duy nhất có `params` rỗng nhưng M_INC_015 cần hai tham số",
+  "xl": "Để mở: chốt message thay thế ở E06-DOC-01b",
+  "kind": "open"
+ },
+ {
+  "epic": "E-06",
+  "n": "24",
+  "spec": "ADR-002 R8",
+  "gap": "Quyền thực thi của hàm worker và job (begin, fail, job tính, job kích hoạt)",
+  "xl": "Đã phản ánh: DoD E06-BE-01a, E06-BE-10, E06-QA-01, E06-QA-02",
+  "kind": "other"
+ },
+ {
+  "epic": "E-07",
+  "n": "1",
+  "spec": "README delivery, api-design/_index",
+  "gap": "API Design `{API_ID}_API.md` ghi \"viết ở LAB-5\", chưa có file",
+  "xl": "Dự kiến sửa thiết kế (PREMISE, mục Thêm): issue E07-DOC-01 (D8)",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-07",
+  "n": "2",
+  "spec": "REQ-001 §8 Q40 (resolved, chờ khách xác nhận: \"giữ hiện tại, không tự đổi giao hàng, ROLE-004 đóng bằng ngoại lệ\") so với DLV_DELIVERY_RECORD_TECH §4.5 bước 3, S-033 A8, DLV_DB §8, error-codes Q13",
+  "gap": "Spec còn ghi Q40 `open` và \"tạm\"; hành vi thiết kế đã là phương án đã chốt",
+  "xl": "Để mở: lệch ghi chép, backlog theo REQ-001 §8 (không cần issue làm rõ)",
+  "kind": "open"
+ },
+ {
+  "epic": "E-07",
+  "n": "3",
+  "spec": "REQ-001 §8 Q92 (open)",
+  "gap": "Số lượng ngoại lệ (Q39 đã chốt) có bị chặn vượt phần còn lại hoặc buộc khớp theo loại; thiết kế chỉ kiểm lớn hơn 0",
+  "xl": "Tạo issue làm rõ: E07-CLR-01",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-07",
+  "n": "4",
+  "spec": "api-list §1, DLV_PART_RECORD (QA-8, G24), DLV_DELIVERY_RECORD_TECH §5 và Q-DLV-T3",
+  "gap": "Idempotency cho ghi lần giao chỉ là đề xuất, chưa có cột hay chỉ mục duy nhất; gửi lại sau timeout thành lần giao mới",
+  "xl": "Tạo issue làm rõ: E07-CLR-02",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-07",
+  "n": "5",
+  "spec": "DLV_EXCEPTION_FORM_SPEC OQ-2 so với DLV_DB 0.3.0 (§4.3 #5)",
+  "gap": "OQ-2 ghi độ dài `reason` còn đề xuất và \"DB chưa có CHECK\"; DLV_DB đã có CHECK tối đa 500 ký tự",
+  "xl": "Để mở: lệch ghi chép, backlog theo DLV_DB",
+  "kind": "open"
+ },
+ {
+  "epic": "E-07",
+  "n": "6",
+  "spec": "REQ-001 §8 Q31 (open), DLV_DB §4.3 `evidence_paths`",
+  "gap": "Bucket, thời hạn lưu, dọn tệp mồ côi chưa chốt; kiểm đường dẫn thuộc người gọi còn `[ĐIỀN]`",
+  "xl": "Để mở: cùng E04-DOC-01a; ghi ở E07-DOC-01b, E07-BE-04",
+  "kind": "open"
+ },
+ {
+  "epic": "E-07",
+  "n": "7",
+  "spec": "REQ-001 §8 Q5 (open), DLV_DELIVERY_LIST_SPEC OQ-3, DLV_DB §6",
+  "gap": "Ngưỡng và đơn vị \"giao hàng tồn đọng\" chưa có; job `DLV_JOB_OVERDUE_SCAN` thuộc FR-NTF-001",
+  "xl": "Giả định (dự kiến PREMISE): job thuộc E-08; E-07 chỉ cung cấp chỉ mục và dữ liệu; S-032 không hiện cảnh báo tồn đọng",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-07",
+  "n": "8",
+  "spec": "REQ-001 §8 Q29, Q41 (open), DLV_DB §7",
+  "gap": "Header `deliveries.csv` và đợt di trú chưa biết nên chưa thể chốt mã giao hàng khi nạp",
+  "xl": "Để mở: thuộc E-11, ghi ở rủi ro; E07-DB-01 chỉ định nghĩa mã sinh từ sequence",
+  "kind": "open"
+ },
+ {
+  "epic": "E-07",
+  "n": "9",
+  "spec": "DLV_SETTLEMENT_CROSSCHECK_SPEC OQ-3",
+  "gap": "E-7 không hiện loại bút toán: `DLV_CROSS_REF` chỉ trả `adjustment_count`, `last_adjusted_at`; `DLV_GET` có `adjustments[]` nhưng ROLE-005 không gọi được",
+  "xl": "Giả định (dự kiến PREMISE): hiện số lần và thời điểm theo spec; chờ API Design",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-07",
+  "n": "10",
+  "spec": "DLV_SETTLEMENT_CROSSCHECK_SPEC OQ-4, OQ-6",
+  "gap": "Xem tệp chứng cứ từ màn tra cứu và nút \"Tải thêm\" cho lot hơn 20 giao dịch chưa có (wireframe thiếu View ID)",
+  "xl": "Để mở: DoD E07-FE-05a, 05b ghi là chờ quyết định; API đã có cursor",
+  "kind": "open"
+ },
+ {
+  "epic": "E-07",
+  "n": "11",
+  "spec": "DLV_EXCEPTION_FORM_SPEC OQ-3, A6",
+  "gap": "Danh mục nhóm lý do theo loại (F-4) chưa có",
+  "xl": "Để mở: F-4 chỉ là trợ giúp nhập, không có cột; chờ khách",
+  "kind": "open"
+ },
+ {
+  "epic": "E-07",
+  "n": "12",
+  "spec": "DLV_DELIVERY_RECORD_SPEC OQ-3, A6",
+  "gap": "Độ dài ghi chú lần giao 200 ký tự chốt ở spec, chưa có nguồn khách",
+  "xl": "Giả định (dự kiến PREMISE): theo DLV_DB `note` tối đa 200; chờ khách",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-07",
+  "n": "13",
+  "spec": "DLV_DB §5, `_index` §5.2",
+  "gap": "Policy SELECT của `lots` và `trades` phải thêm ROLE-004 cho màn giao hàng, nhưng hai bảng thuộc E-02 và E-03",
+  "xl": "Giả định (dự kiến PREMISE): thêm trong migration `E07-DB-01` kèm phụ thuộc `E03-DB-01`, `E02-DB-01`",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-07",
+  "n": "14",
+  "spec": "DLV_DB §4.1 #2, DLV_DELIVERY_RECORD_TECH §4.1",
+  "gap": "Bảng thuộc E-07 nhưng INSERT nằm trong `rpc_trade_confirm` (E-03)",
+  "xl": "Đã phản ánh: `E03-BE-04c` phụ thuộc `E07-DB-01`; E-07 không có issue tạo giao hàng",
+  "kind": "other"
+ },
+ {
+  "epic": "E-07",
+  "n": "15",
+  "spec": "DLV_EXCEPTION_LIST_SPEC §4.1 E-1 so với §4.2",
+  "gap": "E-1 ghi \"mã giao dịch\" (placeholder TX-…) nhưng dùng chung tham số `q` khớp cả mã giao hàng, mã giao dịch, mã lot",
+  "xl": "Để mở: ghi ở E07-DOC-01a; E07-FE-03 theo hành vi của `q`",
+  "kind": "open"
+ },
+ {
+  "epic": "E-07",
+  "n": "16",
+  "spec": "DLV_SETTLEMENT_CROSSCHECK_SPEC §4.3, §5 (D-3), G-1 so với api-list DLV_CROSS_REF, REQ-001 FR-DLV-004 AC3",
+  "gap": "AC3 và api-list nói chung \"không có liên kết thì rỗng\"; SPEC phân biệt mã hoặc giao dịch không tồn tại (items rỗng) với giao dịch có nhưng chưa có giao hàng (`delivery` null, vẫn hiện thẻ giao dịch)",
+  "xl": "Để mở: chốt hai nhánh ở E07-DOC-01a; DoD E07-BE-05, E07-QA-04",
+  "kind": "open"
+ },
+ {
+  "epic": "E-07",
+  "n": "17",
+  "spec": "DLV_EXCEPTION_FORM_SPEC §5 (Error Handling của H-5) so với F-3, Q39",
+  "gap": "Bảng lỗi chỉ nêu `fields.exceptionType`, `reason`, `evidencePaths`, thiếu `fields.qty` dù F-3 bắt buộc theo Q39",
+  "xl": "Dự kiến sửa thiết kế (PREMISE, mục Sửa): thêm `fields.qty` dưới F-3; ghi ở E07-FE-04b, E07-QA-02, E07-DOC-01b",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-07",
+  "n": "18",
+  "spec": "DLV_DELIVERY_RECORD_TECH §4.4 bước 3, §4.6 (trigger → 500) so với ADJ_LOCKED_DAY_GUARD_TECH §4.4 và bảng \"Trigger anh em\"",
+  "gap": "Lỗi trigger của `delivery_parts` và `delivery_exceptions`: TECH delivery ghi 500, TECH guard dùng chung hint và detail để ánh xạ 409",
+  "xl": "Để mở: chốt ở E07-DOC-01b cùng E10-API-ERROR-MAPPING",
+  "kind": "open"
+ },
+ {
+  "epic": "E-07",
+  "n": "19",
+  "spec": "DLV_DELIVERY_RECORD_SPEC §4.3 (Data Mapping) so với DLV_DELIVERY_RECORD_TECH §4.2, §4.6",
+  "gap": "SPEC ghi `qty` dạng số và `completed_at` là `now()`; TECH ghi chuỗi và `clock_timestamp()`",
+  "xl": "Để mở: theo TECH vì `completed_at` là mốc 完納 của E-06; ghi ở E07-DOC-01b",
+  "kind": "open"
+ },
+ {
+  "epic": "E-07",
+  "n": "20",
+  "spec": "DLV_DELIVERY_LIST_SPEC §4.1 F-5, DLV_DELIVERY_RECORD_SPEC §4.1 F-1",
+  "gap": "Tiến độ chia cho `qty_effective`; với 逆仕訳 hoặc Q40 mẫu số có thể 0 (NaN, vô cực)",
+  "xl": "Để mở: chốt hiển thị ở E07-DOC-01a; ghi ở E07-FE-01, E07-FE-02a",
+  "kind": "open"
+ },
+ {
+  "epic": "E-07",
+  "n": "21",
+  "spec": "DLV_DELIVERY_RECORD_TECH §4.3, §4.4 so với §4.6 bước 4 (thứ tự kiểm ngoại lệ)",
+  "gap": "Ngoại lệ dùng cùng bước 4.3, 4.4 nên tồn tại và trạng thái cuối được xét trước ngày",
+  "xl": "Đã phản ánh: DoD E07-BE-04 viết rõ thứ tự, E07-QA-02 kiểm ca giao hàng đã đóng và ngày khóa",
+  "kind": "other"
+ },
+ {
+  "epic": "E-07",
+  "n": "22",
+  "spec": "DLV_EXCEPTION_LIST_SPEC §4.2 (E-2)",
+  "gap": "Server từ chối status ngoài `waiting` và `in_progress` là ràng buộc của màn S-034, không phải của `DLV_LIST` (S-032 dùng bốn trạng thái)",
+  "xl": "Đã phản ánh: ghi ở E07-DOC-01a",
+  "kind": "other"
+ },
+ {
+  "epic": "E-08",
+  "n": "1",
+  "spec": "README notifications-rules, api-design/_index",
+  "gap": "API Design `{API_ID}_API.md` ghi \"viết ở LAB-5\", chưa có file",
+  "xl": "Dự kiến sửa thiết kế (PREMISE, mục Thêm): issue E08-DOC-01 (D8)",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-08",
+  "n": "2",
+  "spec": "REQ-001 §8 Q3 (open)",
+  "gap": "Nhà cung cấp email, người nhận mặc định, loại Critical mặc định chưa có",
+  "xl": "Tạo issue làm rõ: E08-CLR-02",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-08",
+  "n": "3",
+  "spec": "REQ-001 §8 Q5 (open), NTF_CRITICAL_RETRY_TECH §4.5, DLV_DELIVERY_LIST_SPEC OQ-3",
+  "gap": "Đơn vị của `threshold_days` cho `delivery_overdue`, ngưỡng `outbox_stale` (đề xuất 10 phút) và hành vi khi ngưỡng rỗng chưa có",
+  "xl": "Tạo issue làm rõ: E08-CLR-01",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-08",
+  "n": "4",
+  "spec": "REQ-001 §8 Q8, Q44 (open), NTF_DB §4.3, §4.4, S-037 OQ-7",
+  "gap": "Thời hạn lưu `notifications` và `notification_send_logs`, quy tắc che email trong lịch sử",
+  "xl": "Tạo issue làm rõ: E08-CLR-03",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-08",
+  "n": "5",
+  "spec": "api-list §3 (`NTF_JOB_OUTBOX_DISPATCH`, FR-NTF-001, 002), OUTBOX_DB, ADR-007 R2, R3 so với khóa tạm `E10-OUTBOX (outbox và worker)` đã dùng ở E-01..E-07",
+  "gap": "Worker gửi thuộc FR-NTF-001, 002 (E-08), còn bảng outbox và hàm phát thuộc E-10; E-06 chỗ hở 14 ghi \"vòng lặp worker thuộc E-10\"",
+  "xl": "Giả định (dự kiến PREMISE): worker dispatch thuộc E-08; E-10 giữ bảng, danh mục, hàm phát và hạ tầng (pg_cron, pg_net, secret); đã sửa chỗ hở 14 của E-06",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-08",
+  "n": "6",
+  "spec": "api-list §3 (`DLV_JOB_OVERDUE_SCAN`, FR-NTF-001), DLV_DB §6",
+  "gap": "Job quét giao hàng tồn đọng mô tả ở feature delivery nhưng thuộc FR-NTF-001",
+  "xl": "Giả định (dự kiến PREMISE): thuộc E-08 (E07 chỉ cung cấp bảng và chỉ mục); cùng chỗ hở 7 của E-07",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-08",
+  "n": "7",
+  "spec": "NTF_DB §8 (Q22, Q24), NTF_CRITICAL_RETRY_TECH (Q68, Q-N3, Q-N4), README",
+  "gap": "Còn ghi `open` hoặc \"ngoài phạm vi\" cho Q22, Q68, Q77, Q79 trong khi REQ-001 §8 đã `resolved` (Q22, Q37, Q62, Q68, Q77, Q79)",
+  "xl": "Để mở: lệch ghi chép, backlog theo REQ-001 §8",
+  "kind": "open"
+ },
+ {
+  "epic": "E-08",
+  "n": "8",
+  "spec": "S-037 OQ-4, NTF_CONFIG_SAVE",
+  "gap": "Đua ghi cấu hình khi hai ROLE-007 cùng sửa: không có `CONFLICT`, ghi sau thắng",
+  "xl": "Giả định (dự kiến PREMISE): ghi sau thắng, audit giữ trước và sau; có thể thêm `updated_at` và `CONFLICT`, chốt ở E08-DOC-01a",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-08",
+  "n": "9",
+  "spec": "S-037 OQ-9, NTF_DB §4.1",
+  "gap": "DB không CHECK `send_time` thuộc {08:00, 17:00} và cặp (loại phát ngay, `send_time` rỗng); chỉ route kiểm",
+  "xl": "Để mở: chốt ở E08-DOC-01a, E08-DB-01",
+  "kind": "open"
+ },
+ {
+  "epic": "E-08",
+  "n": "10",
+  "spec": "S-037 OQ-8, OUTBOX_DB §4.2",
+  "gap": "Mức `severity` mặc định theo từng `alert_type` chưa chốt",
+  "xl": "Để mở: chốt ở E08-DOC-01a",
+  "kind": "open"
+ },
+ {
+  "epic": "E-08",
+  "n": "11",
+  "spec": "S-037 OQ-2, OQ-5, OQ-6",
+  "gap": "Số người nhận tối đa mỗi loại, khoảng tối đa lọc lịch sử, có dialog khi xác nhận cảnh báo",
+  "xl": "Giả định (dự kiến PREMISE): không giới hạn ở DB, không dialog; chờ khách",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-08",
+  "n": "12",
+  "spec": "NTF_CRITICAL_RETRY_TECH §3 (nhóm nội bộ)",
+  "gap": "Backoff 1 phút và 5 phút của sự kiện nội bộ là \"đề xuất\", chưa chốt",
+  "xl": "Để mở: chốt ở E08-DOC-01b",
+  "kind": "open"
+ },
+ {
+  "epic": "E-08",
+  "n": "13",
+  "spec": "ADR-007 R2, NTF_CRITICAL_RETRY_TECH §4.4",
+  "gap": "Lịch `pg_cron` theo giây cần phiên bản từ 1.5, \"kiểm ở spike LAB-5\"",
+  "xl": "Đã phản ánh: DoD E08-BE-08a có ca spike",
+  "kind": "other"
+ },
+ {
+  "epic": "E-08",
+  "n": "14",
+  "spec": "NTF_DB §4.3 (`title`, `body`), S-037",
+  "gap": "Mẫu câu chữ tiêu đề và nội dung thông báo còn `[ĐIỀN]`",
+  "xl": "Để mở: chốt ở E08-DOC-01b",
+  "kind": "open"
+ },
+ {
+  "epic": "E-08",
+  "n": "15",
+  "spec": "REQ-001 §8 Q4 (open), NTF_CRITICAL_RETRY_TECH",
+  "gap": "SFTP có chạy được trên Deno không (spike), host, tên tệp, lịch",
+  "xl": "Để mở: thuộc E-09; ghi ở E08-BE-08d",
+  "kind": "open"
+ },
+ {
+  "epic": "E-08",
+  "n": "16",
+  "spec": "NTF_CRITICAL_RETRY_TECH §4.3 bước 3, NTF_DB §4.4, FR-NTF-002 AC2, AC5",
+  "gap": "\"Chỉ gửi người chưa success\" không phân biệt kênh, trong khi log theo (kênh, người): in_app success sẽ chặn retry email",
+  "xl": "Giả định (dự kiến PREMISE): xét retry theo (sự kiện, người nhận, kênh); chốt ở E08-DOC-01b",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-08",
+  "n": "17",
+  "spec": "NTF_CRITICAL_RETRY_TECH §4.4 lỗi \"không còn processing\"",
+  "gap": "Không nhận diện kết quả muộn của lần claim cũ khi lần claim mới cũng đang processing",
+  "xl": "Giả định (dự kiến PREMISE): claim trả định danh lần nhận, result đối chiếu; chốt ở E08-DOC-01b",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-08",
+  "n": "18",
+  "spec": "NTF_CRITICAL_RETRY_TECH §4.3 bước 4, INC_INCENTIVE_CALCULATE_TECH §4.1 (2a)",
+  "gap": "Handler `business_day_locked` mô tả cặp job, thiếu `worker_incentive_run_begin`/`fail` và nhánh bỏ qua job",
+  "xl": "Giả định (dự kiến PREMISE): theo hợp đồng E06-BE-01a; chốt ở E08-DOC-01b",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-08",
+  "n": "19",
+  "spec": "NTF_CRITICAL_RETRY_TECH §4.4, §5",
+  "gap": "Phép 260 giây giả định T là thời gian xử lý một attempt; chưa nói ngân sách khi nhiều người nhận hoặc 100 sự kiện",
+  "xl": "Để mở: chốt ngân sách mỗi attempt ở E08-DOC-01b",
+  "kind": "open"
+ },
+ {
+  "epic": "E-08",
+  "n": "20",
+  "spec": "S-037 Data Mapping NTF_OPS_ALERT_LIST",
+  "gap": "Tham số `acknowledged` vừa \"false mặc định\" vừa \"bỏ trống = tất cả\"",
+  "xl": "Giả định (dự kiến PREMISE): server vắng tham số là tất cả, UI gửi false tường minh; chốt ở E08-DOC-01a",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-08",
+  "n": "21",
+  "spec": "OUTBOX_DB §4.1 (`next_attempt_at`), NTF_CRITICAL_RETRY_TECH §4.4",
+  "gap": "Backoff nội bộ [1,5,15] phút (OUTBOX_DB) lệch [1,5] phút với 3 lần thử (TECH)",
+  "xl": "Để mở: chốt một bảng ở E08-DOC-01b",
+  "kind": "open"
+ },
+ {
+  "epic": "E-08",
+  "n": "22",
+  "spec": "INC_INCENTIVE_CALCULATE_TECH §4.1 (bảng lỗi), NTF_CRITICAL_RETRY_TECH §4.2",
+  "gap": "Hai nơi cùng được ghi là tăng `attempt_count` (`worker_outbox_result` và claim)",
+  "xl": "Đã sửa thiết kế (dự kiến PREMISE): chỉ claim tăng; chốt ở E08-DOC-01b, E06-BE-01a",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-08",
+  "n": "23",
+  "spec": "NTF_CRITICAL_RETRY_TECH §3 (hạn 5 phút), §4.1 (dòng treo 2 phút)",
+  "gap": "Mốc treo 2 phút làm Critical mất callback ở lần cuối kết thúc muộn hơn 300 giây (ví dụ claim ở 220 giây, treo sau 340 giây)",
+  "xl": "Giả định (dự kiến PREMISE): Critical processing hết hạn theo deadline trừ một chu kỳ tick; chốt ở E08-BE-08a, E08-DOC-01b",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-08",
+  "n": "24",
+  "spec": "NTF_CRITICAL_RETRY_TECH §4.4",
+  "gap": "Hiệu lực của log kết quả stale khi tổng hợp và retry chưa quy định",
+  "xl": "Giả định (dự kiến PREMISE): success luôn có hiệu lực, lỗi stale chỉ để quan sát; chốt ở E08-DOC-01b",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-08",
+  "n": "25",
+  "spec": "S-037 Data Mapping, CORE_DB (RLS `business_days`)",
+  "gap": "Danh sách cảnh báo cần `business_date` nhưng ROLE-007 không có SELECT `business_days`",
+  "xl": "Giả định (dự kiến PREMISE): hàm definer hẹp của E08-BE-03; chốt ở E08-DOC-01a",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-09",
+  "n": "1",
+  "spec": "README reports-audit, api-design/_index",
+  "gap": "API Design `{API_ID}_API.md` ghi \"viết ở LAB-5\", chưa có file",
+  "xl": "Dự kiến sửa thiết kế (PREMISE, mục Thêm): issue E09-DOC-01 (D8)",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-09",
+  "n": "2",
+  "spec": "REQ-001 §8 Q4 (open), RPA_DB, FR-RPA-003 AC5",
+  "gap": "SFTP: host, định dạng CSV RPT-06, mẫu tên tệp, định dạng batch code, lịch, sandbox, tệp cũ sau 締め再開",
+  "xl": "Tạo issue làm rõ: E09-CLR-01",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-09",
+  "n": "3",
+  "spec": "REQ-001 §8 Q24 (open), ADR-008 R6",
+  "gap": "Người nhận mốc băm audit ngoài ROLE-007",
+  "xl": "Tạo issue làm rõ: E09-CLR-04",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-09",
+  "n": "4",
+  "spec": "RPA_DAILY_REPORTS_SPEC A4, RPA_MONTHLY_REPORTS_SPEC A4, REQ-001 Q90 (open), Q14",
+  "gap": "Spec chỉ nêu nguồn chức năng của 11 báo cáo, không có cột CSV (chỉ RPT-06 có cột tối thiểu); nguồn \"log trạng thái giao dịch\" của RPT-02 không có bảng; SLA của RPT-09 (F-031 chưa phân tích); Q90 làm tròn từng dòng hay tổng và số âm; Q14 đã chốt \"giữ bản gốc, chỉ phần mới và delta\" (cho cả thưởng và báo cáo ngày) nhưng chưa nói cách thể hiện trên 9 báo cáo lần khóa 2",
+  "xl": "Tạo issue làm rõ: E09-CLR-02 (Q14 đã chốt cho cả thưởng và báo cáo ngày: chỉ làm rõ cách thể hiện)",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-09",
+  "n": "5",
+  "spec": "api-list QA-5, QA-10, REQ-001 Q31 (open), RPA_EXPORT_CENTER_SPEC OQ-2",
+  "gap": "Thời hạn signed URL, quy tắc tên tệp, tải 12 báo cáo ra hai zip hay một",
+  "xl": "Tạo issue làm rõ: E09-CLR-03",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-09",
+  "n": "6",
+  "spec": "RPA_AUDIT_LOG_SEARCH_SPEC OQ-2, OQ-3",
+  "gap": "Bảng 5 nhóm thao tác sang action; cách ghép mã giao dịch với bản ghi audit liên quan; độ dài tối đa mã giao dịch",
+  "xl": "Tạo issue làm rõ: E09-CLR-05",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-09",
+  "n": "7",
+  "spec": "RPA_DB §3, RPA_MONTHLY_REPORTS_SPEC A2, FR-RPA-002 AC1",
+  "gap": "Lúc khóa ngày D chưa biết còn ngày nghiệp vụ nào sau D trong tháng (ngày nghỉ, ngày chưa mở), nên không xác định được \"ngày nghiệp vụ cuối tháng\" để sinh RPT-10..12",
+  "xl": "Tạo issue làm rõ: E09-CLR-06",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-09",
+  "n": "8",
+  "spec": "AUDIT_DB, RPA_AUDIT_HASH_CHAIN_TECH (một TECH cho `write_audit` và `audit_verify_chain`), api-list §3",
+  "gap": "Một function có hai thành phần; FR-RPA-004 và 007 cùng nằm ở feature báo cáo",
+  "xl": "Giả định (dự kiến PREMISE): ghi audit (bảng, hàm, trigger, thu quyền) thuộc E-10; job kiểm chuỗi, bảng `audit_verification_runs`, mốc và giám sát lỡ lượt thuộc E-09; hai epic dùng chung hàm chuẩn hóa băm (một nguồn)",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-09",
+  "n": "9",
+  "spec": "api-list §3 `RPA_JOB_SFTP_PUSH`, `NTF_CRITICAL_RETRY_TECH` §4.3",
+  "gap": "SFTP đẩy thuộc FR-RPA-003 (E-09) nhưng handler và lịch thử nằm ở worker E-08",
+  "xl": "Giả định (dự kiến PREMISE): E-08 gửi thật và điều phối thử lại (`E08-BE-08d`); E-09 giữ `sftp_exports`, `worker_sftp_result` và việc chèn dòng `pending`; đã khớp khóa tạm `E09-WORKER`",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-09",
+  "n": "10",
+  "spec": "RPA_DB (10 bảng), api-list §3 (`RPA_MIGRATION_*`), README (\"không có màn\")",
+  "gap": "FR-RPA-008, ba bảng public `migration_*` và năm bảng staging nằm trong feature reports-audit",
+  "xl": "Giả định (dự kiến PREMISE): thuộc E-11 (CLAUDE.md mục 3); E-09 không có issue cho phần này; `rate_history_trade` chỉ đọc `migration_record_links` (E-11 cung cấp bảng)",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-09",
+  "n": "11",
+  "spec": "RPA_RATE_VERSION_HISTORY_SPEC A3, OQ-5, FR-RPA-006 AC3, api-list",
+  "gap": "AC3 yêu cầu cảnh báo vận hành khi không xác định phiên bản, nhưng chế độ `tradeCode` dùng hàm `stable` (không ghi được) và SPEC nói GET ghi `ops_alerts` mỗi lần tra (cần khóa chống trùng)",
+  "xl": "Giả định (dự kiến PREMISE), sửa sau review Codex: hàm đọc giữ `stable`; route gọi hàm ghi riêng `record_rate_version_unknown_alert(p_trade_id)` để ghi `ops_alerts` `rate_version_unknown` (chống trùng theo giao dịch chưa xác nhận); E-06 chỉ cảnh báo theo lần khóa và khi duyệt bút toán, dữ liệu di trú không chạy job thưởng (Q66) nên không thay thế được; ghi chỗ hở ở E09-DOC-01b",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-09",
+  "n": "12",
+  "spec": "RPA_DAILY_REPORTS_SPEC E3, §4.2, api-list RPA_REPORT_LIST",
+  "gap": "`lockId` hoặc `dayId` sai hoặc không có trong 60 ngày: SPEC lúc ghi VALIDATION lúc ghi VALIDATION hoặc NOT_FOUND; api-list chỉ có VALIDATION",
+  "xl": "Để mở: chốt cặp mã ở E09-DOC-01a",
+  "kind": "open"
+ },
+ {
+  "epic": "E-09",
+  "n": "13",
+  "spec": "RPA_EXPORT_CENTER_SPEC (nút zip khóa khi còn `running`), api-list RPA_REPORT_DOWNLOAD_ALL",
+  "gap": "Spec chỉ nói FE khóa nút, API chưa nói rõ khi gọi lúc còn báo cáo `running`",
+  "xl": "Giả định (dự kiến PREMISE): API vẫn tạo zip từ phần đã `succeeded` và liệt kê phần chưa xong ở `skipped`; chốt ở E09-DOC-01a",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-09",
+  "n": "14",
+  "spec": "RPA_AUDIT_LOG_SEARCH_SPEC OQ-6, OUTBOX_DB RLS",
+  "gap": "ROLE-005 không đọc `outbox_events` nên chỉ thấy đã tạo mốc, không biết email mốc đã gửi thành công",
+  "xl": "Để mở: không thêm API ngoài spec; ghi ở E09-BE-09",
+  "kind": "open"
+ },
+ {
+  "epic": "E-09",
+  "n": "15",
+  "spec": "REQ-001 §8 (Q14, Q16, Q22, Q26, Q43, Q51, Q64, Q65 resolved), RPA_DAILY_REPORTS_SPEC OQ, RPA_MONTHLY_REPORTS_SPEC F-2, RPA_AUDIT_LOG_SEARCH_SPEC, RPA_AUDIT_HASH_CHAIN_TECH, RPA_DB §8",
+  "gap": "Còn ghi `open` hoặc \"chờ Q43/Q51\" cho các câu đã chốt (ví dụ F-4 ghi sinh lại chờ Q43 trong khi Q43 đã chốt không lưu lịch sử lượt lỗi)",
+  "xl": "Để mở: lệch ghi chép, backlog theo REQ-001 §8",
+  "kind": "open"
+ },
+ {
+  "epic": "E-09",
+  "n": "16",
+  "spec": "FR-RPA-004 AC5, DR-RET-01",
+  "gap": "Lưu audit online ít nhất 7 năm; E-09 không có issue riêng cho chính sách lưu",
+  "xl": "Để mở: thuộc nền tảng E-10 (retention, sao lưu); ghi ở `task-breakdown.md` mục 2",
+  "kind": "open"
+ },
+ {
+  "epic": "E-09",
+  "n": "17",
+  "spec": "RPA_DAILY_REPORTS_SPEC A2, INC_INCENTIVE_CALCULATE_TECH §4.2, ADJ_DB, E05 đối soát",
+  "gap": "Báo cáo gắn `lock_id` nhưng nguồn có sẵn (view `trade_effective_values`, RPC đối soát) chỉ có giá trị hiện tại; nguồn theo mốc `locked_at` mới có ở bên thưởng",
+  "xl": "Giả định (dự kiến PREMISE): báo cáo ngày đọc dữ liệu tại mốc `locked_at` như job thưởng; chốt ở E09-DOC-01a",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-09",
+  "n": "18",
+  "spec": "NTF_CRITICAL_RETRY_TECH §4.3, §4.4, DAILY A3",
+  "gap": "Handler vừa \"lỗi một báo cáo không chặn báo cáo khác\" vừa \"lỗi thì thử lại cả cặp\"; chưa nói ranh giới giao dịch và kết quả trả về",
+  "xl": "Giả định (dự kiến PREMISE): mỗi báo cáo một giao dịch; lỗi kỹ thuật trả lỗi để thử lại; hết lượt gọi `worker_report_mark_failed`; chốt ở E09-BE-05a và E08-BE-08d",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-09",
+  "n": "19",
+  "spec": "NTF_CRITICAL_RETRY_TECH §4.4, RPA_DB §4.2",
+  "gap": "Kết quả SFTP của lần thử cũ (đã bị claim lại) chưa bị chặn ở bảng `sftp_exports`",
+  "xl": "Giả định (dự kiến PREMISE): `worker_sftp_result` nhận định danh lần nhận, chạy cùng giao dịch với `worker_outbox_result`; chốt ở E09-BE-06",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-09",
+  "n": "20",
+  "spec": "RPA_AUDIT_HASH_CHAIN_TECH §4.3, AUDIT_DB §4.2",
+  "gap": "Dòng \"đang chạy\" và lượt chết giữa chừng không thể có nếu chèn run và kiểm nằm một giao dịch",
+  "xl": "Giả định (dự kiến PREMISE): bắt đầu commit riêng, kiểm REPEATABLE READ riêng, kết thúc riêng; chốt ở E09-DOC-01b",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-09",
+  "n": "21",
+  "spec": "RPA_MONTHLY_REPORTS_SPEC A2 và Element E-8",
+  "gap": "A2 ghi báo cáo tháng cũ vẫn hiện khi ngày cuối tháng bị 締め再開, Element E-8 ghi ẩn ba dòng khi chưa khóa",
+  "xl": "Để mở: chốt ở E09-DOC-01a; backlog hiện giữ bộ cũ kèm banner",
+  "kind": "open"
+ },
+ {
+  "epic": "E-09",
+  "n": "22",
+  "spec": "RPA_DB §4.1 (`report_runs`, khóa idempotent theo `lock_id`, `period_month`, `rule_version_id`)",
+  "gap": "Không có cột nào phân biệt thử lại cùng sự kiện với sự kiện mới (khóa lại, tháng chốt lại) cho cùng khóa idempotent",
+  "xl": "Đã sửa thiết kế (dự kiến PREMISE, mục Sửa): thêm cột `source_event_id` (khóa ngoại `outbox_events`) vào `report_runs`; thử lại cùng sự kiện giữ báo cáo đã xong, sự kiện mới tái tạo; chốt ở E09-DB-01, E09-BE-05a",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-09",
+  "n": "23",
+  "spec": "NTF_CRITICAL_RETRY_TECH §4.2, §4.4",
+  "gap": "Thu hồi dòng `processing` treo ở lần cuối chuyển thẳng sang `failed` mà không qua `worker_outbox_result`, nên các hiệu ứng kết thúc (alert, `sftp_exports`, `report_runs`) có thể thiếu",
+  "xl": "Giả định (dự kiến PREMISE): một giao thức kết thúc dùng chung `finalize_outbox_failed` cho cả callback và thu hồi; chốt ở E08-BE-08c",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-10",
+  "n": "1",
+  "spec": "api-design/_index §1, api-list §2.1",
+  "gap": "API Design `{API_ID}_API.md` cho `SYS_ME`, `SYS_EVIDENCE_UPLOAD_URL` ghi \"viết ở LAB-5\", chưa có file",
+  "xl": "Dự kiến sửa thiết kế (PREMISE, mục Thêm): issue E10-DOC-01 (D8)",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-10",
+  "n": "2",
+  "spec": "database-design/_index §5, ADR-001 §5, ARCH-01 §2",
+  "gap": "Nhiều mục ghi \"giữ nguyên prototype LAB-3\" (`profiles` 7 cột, `today_tokyo`, `has_role`, `rpcToResponse`, `route-access-map`, `json-request`) nhưng `reference/lab-3-source/` không có trong repo này",
+  "xl": "Giả định (dự kiến PREMISE): dựng lại từ mô tả spec, kiểm bằng E10-QA-01 và E10-QA-03",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-10",
+  "n": "3",
+  "spec": "REQ-001 §8 Q8 (open), ARCH-01 §4",
+  "gap": "Vùng lưu dữ liệu, gói Supabase và Vercel, số môi trường, chu kỳ xoay vòng bí mật chưa có",
+  "xl": "Tạo issue làm rõ: E10-CLR-01",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-10",
+  "n": "4",
+  "spec": "REQ-001 §8 Q31 (open), api-list QA-5",
+  "gap": "Bucket chứng cứ, thời hạn, chuyển lạnh sau 3 năm; 5 tệp, 10 MB, jpg, png, pdf mới là giả định LAB-1",
+  "xl": "Tạo issue làm rõ: E10-CLR-02",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-10",
+  "n": "5",
+  "spec": "REQ-001 §8 Q5 (open), NFR-OPS-01",
+  "gap": "Ngưỡng và người nhận cho 4 loại cảnh báo, người chịu trách nhiệm từng NFR, kênh cảnh báo sức khỏe hệ thống",
+  "xl": "Tạo issue làm rõ: E10-CLR-03",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-10",
+  "n": "6",
+  "spec": "CORE_DB §4.4 (Danh mục `params`), ADR-003",
+  "gap": "Không có giá trị bản `market_rule` và `incentive_rate` đầu tiên (tỷ lệ thật chưa có); chưa nói bản đầu qua duyệt hai người hay nạp khi khởi tạo",
+  "xl": "Tạo issue làm rõ: E10-CLR-04",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-10",
+  "n": "7",
+  "spec": "error-codes (Q4), PAU_LOGIN_SPEC A-2",
+  "gap": "Yêu cầu đổi ngôn ngữ JA và VI nhưng chuỗi tiếng Nhật của message chưa có",
+  "xl": "Tạo issue làm rõ: E10-CLR-05",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-10",
+  "n": "8",
+  "spec": "api-list §2.1 `SYS_ME` (\"current_business_day() chỉ đọc trạng thái\"), CORE_DB",
+  "gap": "`current_business_day()` là get-or-create (ghi), không thể gọi trong GET chỉ đọc",
+  "xl": "Giả định (dự kiến PREMISE): `SYS_ME` dùng biến thể chỉ đọc; chốt ở E10-DOC-01",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-10",
+  "n": "9",
+  "spec": "ARCH-05 §4, database-design/_index §5.2 (`get_my_role`), CORE_DB",
+  "gap": "Một mục (`get_my_role` có điều kiện `aal2`) nằm ở cả nền tảng và xác thực",
+  "xl": "Giả định (dự kiến PREMISE): E-10 tạo hàm gốc, `E01-BE-06` thêm điều kiện `aal`; hàm `check_access` kiểm `aal` trước `has_role` do E-10 cung cấp (khóa tạm `E10-AUTH-GUARD`)",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-10",
+  "n": "10",
+  "spec": "OUTBOX_DB §4.1.1, NTF_CRITICAL_RETRY_TECH §3",
+  "gap": "Đã kiểm: `max_attempts` nội bộ là 3 ở cả hai nguồn (SFTP 4); mâu thuẫn tôi ghi ở vòng nháp là sai",
+  "xl": "Đã phản ánh: OUTBOX_DB là nguồn danh mục, ghi ở E10-OBX-01",
+  "kind": "other"
+ },
+ {
+  "epic": "E-10",
+  "n": "11",
+  "spec": "CORE_DB (Q57), `current_business_day()`",
+  "gap": "Không đọc `market_holidays`, nên bản ghi tạo vào 休市日 vẫn rơi vào ngày đó",
+  "xl": "Đã phản ánh: Q57 đã chốt, giữ hành vi, DB không chặn; ghi ở E10-DB-04",
+  "kind": "other"
+ },
+ {
+  "epic": "E-10",
+  "n": "12",
+  "spec": "FR-RPA-004 AC5, DR-RET-01",
+  "gap": "Lưu audit online 7 năm; không có issue nào ở các epic khác giữ chính sách này",
+  "xl": "Giao E10-INF-03 (sao lưu, lưu trữ, khôi phục)",
+  "kind": "other"
+ },
+ {
+  "epic": "E-10",
+  "n": "13",
+  "spec": "ADR-007 R2, NTF_CRITICAL_RETRY_TECH §4.2",
+  "gap": "Lịch `pg_cron` theo giây cần phiên bản từ 1.5, \"kiểm ở spike\"",
+  "xl": "Đã phản ánh: spike ở E10-OBX-04 (kết quả báo cho E-08)",
+  "kind": "other"
+ },
+ {
+  "epic": "E-10",
+  "n": "14",
+  "spec": "ADR-002 R1, PostgreSQL (quyền execute mặc định của PUBLIC)",
+  "gap": "Thu `execute` khỏi `anon` và `authenticated` chưa đóng quyền kế thừa từ `PUBLIC`; helper `outbox_emit`, `ops_alert_record` không có điều kiện cấm gọi trực tiếp",
+  "xl": "Giả định (dự kiến PREMISE): thu khỏi PUBLIC, đặt default privileges đúng role migration, grant theo danh sách cho phép; chốt ở E10-DB-01, OBX-02, OBX-03, QA-01",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-10",
+  "n": "15",
+  "spec": "api-design/_index §2.2, error-codes §1.4",
+  "gap": "Lỗi trigger có `hint` hợp lệ nhưng `details` hỏng: một nguồn ghi 500, một nguồn ghi vẫn trả `code` với `params` rỗng",
+  "xl": "Đã sửa thiết kế (dự kiến PREMISE, mục Sửa): theo error-codes, trả `code`, `params` rỗng, log ERROR; sửa api-design/_index theo; chốt ở E10-DOC-01, E10-API-02",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-10",
+  "n": "16",
+  "spec": "AUDIT_DB §4.1, RPA_AUDIT_HASH_CHAIN_TECH §5",
+  "gap": "Cột băm NOT NULL không thêm nguyên trạng vào audit cũ; backfill bị trigger bất biến chặn",
+  "xl": "Giả định (dự kiến PREMISE): nâng cấp hai bước trong cửa sổ bảo trì (cột chuyển tiếp, backfill có kiểm soát, siết); chốt ở E10-AUD-01, E10-AUD-03",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-10",
+  "n": "17",
+  "spec": "Supabase Storage (signed upload URL), api-list §2.1",
+  "gap": "URL tải lên là quyền mang theo token, không gắn phiên người tạo; thời hạn do dịch vụ quy định",
+  "xl": "Để mở: ghi giới hạn và tách thời hạn tải lên khỏi tải xuống ở E10-DOC-01, E10-CLR-02",
+  "kind": "open"
+ },
+ {
+  "epic": "E-11",
+  "n": "1",
+  "spec": "README reports-audit, api-design/_index",
+  "gap": "API Design `{API_ID}_API.md` ghi \"viết ở LAB-5\", chưa có file",
+  "xl": "Dự kiến sửa thiết kế (PREMISE, mục Thêm): E11-DOC-01 (D8), cùng hai tài liệu inventory và runbook (E11-DOC-02, E11-DOC-03)",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-11",
+  "n": "2",
+  "spec": "REQ-001 §8 Q9 (open), FR-RPA-008 AC6",
+  "gap": "Nguồn thuộc baseline, khoảng lịch sử",
+  "xl": "Tạo issue làm rõ: E11-CLR-01",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-11",
+  "n": "3",
+  "spec": "REQ-001 §8 Q29 (open), RPA_MIGRATION_LOAD_TECH §4.1, §4.2",
+  "gap": "Header và mã hóa tệp; tiêu chí gộp lot trùng \"[ĐIỀN]\"; cách ánh xạ trạng thái participant và giao dịch",
+  "xl": "Tạo issue làm rõ: E11-CLR-02",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-11",
+  "n": "4",
+  "spec": "REQ-001 §8 Q41 (open), ADR-014 §5",
+  "gap": "Wave của `deliveries.csv`; cấu trúc `delivery_part`; quy tắc `delivery_code`",
+  "xl": "Tạo issue làm rõ: E11-CLR-03",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-11",
+  "n": "5",
+  "spec": "REQ-001 §8 Q67 (open)",
+  "gap": "Ngày cutover, giờ đóng băng, người ký go hoặc no-go",
+  "xl": "Tạo issue làm rõ: E11-CLR-04",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-11",
+  "n": "6",
+  "spec": "REQ-001 §8 Q91 (open), RPA_DB §8",
+  "gap": "`entity_type` không có `lot_judgment` hay `rule_version`; phiên bản đầu do loader nạp hay ROLE-006 nhập",
+  "xl": "Tạo issue làm rõ: E11-CLR-05 (phối hợp E10-CLR-04, E06-CLR-02)",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-11",
+  "n": "7",
+  "spec": "api-list QA-4, PREMISE P14",
+  "gap": "Ba API di trú không gắn màn nhưng ROLE-005 phải đọc, ký số tiền, xử lý loại trừ",
+  "xl": "Tạo issue làm rõ: E11-CLR-06",
+  "kind": "clarify"
+ },
+ {
+  "epic": "E-11",
+  "n": "8",
+  "spec": "RPA_MIGRATION_LOAD_TECH §3, §4.3",
+  "gap": "TECH chỉ mô tả nạp theo ngày nghiệp vụ (`load_day`); Wave 1 (participant, căn cứ) không có ngày nghiệp vụ nhưng cũng phải nạp",
+  "xl": "Giả định (dự kiến PREMISE): thêm bước `load_wave1` một giao dịch; chốt ở E11-DOC-01, E11-BE-01d",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-11",
+  "n": "9",
+  "spec": "RPA_MIGRATION_LOAD_TECH §4.5 (bước 2), danh sách `p_step`",
+  "gap": "Rollback lượt chưa nạp (`rolled_back`, xóa `stg_*`) mô tả nhưng không có bước RPC; `failed` không rõ ai đặt",
+  "xl": "Giả định (dự kiến PREMISE): thêm bước `rollback`; `failed` ghi khi lỗi không phục hồi; chốt ở E11-BE-01f",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-11",
+  "n": "10",
+  "spec": "RPA_DB §4.3 (`wave` 1..3), REQ-001 Q38",
+  "gap": "Wave 3 (quyết toán, báo cáo) không còn nguồn nạp sau Q38 nhưng CHECK vẫn cho 3",
+  "xl": "Đã phản ánh: giữ CHECK theo spec, ghi ở E11-DB-01",
+  "kind": "other"
+ },
+ {
+  "epic": "E-11",
+  "n": "11",
+  "spec": "RPA_MIGRATION_LOAD_TECH (Q-N11), REQ-001 Q38, Q42, Q66, Q78",
+  "gap": "Còn ghi `open` hoặc \"giả định\" cho các câu đã `resolved` ở REQ-001 §8",
+  "xl": "Để mở: lệch ghi chép, backlog theo REQ-001 §8",
+  "kind": "open"
+ },
+ {
+  "epic": "E-11",
+  "n": "12",
+  "spec": "api-list RPA_MIGRATION_BATCH_LIST, RPA_DB §4.4",
+  "gap": "`raw_record` của dòng loại trừ chứa dữ liệu nguồn (có thể là dữ liệu cá nhân của participant) nhưng API trả `migration_rejected_records`",
+  "xl": "Giả định (dự kiến PREMISE): API không trả `raw_record`; chỉ mở nếu có quyết định ở DOC-01",
+  "kind": "assume"
+ },
+ {
+  "epic": "E-11",
+  "n": "13",
+  "spec": "RFP 付録 C, quy tắc repo public",
+  "gap": "Fixture mẫu `actors.csv`... thuộc đề gốc, không được đưa lên repo",
+  "xl": "Đã phản ánh: fixture tự dựng ở E11-QA-02, header theo khuôn chốt ở E11-CLR-02",
+  "kind": "other"
+ },
+ {
+  "epic": "E-11",
+  "n": "14",
+  "spec": "RPA_MIGRATION_LOAD_TECH §4.1 (mỗi lượt một tệp), §4.3; RPA_DB §4.3; REQ-001 Q78",
+  "gap": "Một ngày cần lot, giao dịch, giao hàng trước khi khóa nhưng mỗi lượt chỉ một tệp và Q78 cấm nạp bổ sung vào ngày đã khóa",
+  "xl": "Đã sửa thiết kế (dự kiến PREMISE, mục Sửa): mỗi tệp giữ lượt và SHA-256 riêng, `validate` dựng kế hoạch nạp theo ngày trên tập lượt cùng đợt, `load_day` nhận tập lượt và nạp mọi thực thể của ngày trong một giao dịch rồi khóa; chốt ở E11-DOC-01, E11-BE-01c, E11-BE-01e",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-11",
+  "n": "15",
+  "spec": "RPA_MIGRATION_LOAD_TECH §4.2 (bước 2)",
+  "gap": "Tham chiếu chéo chỉ tra link của Wave trước, trong khi lot và giao dịch cùng Wave 2",
+  "xl": "Đã sửa thiết kế (dự kiến PREMISE): tra link đã có và dòng staging đã qua kiểm cùng đợt; chốt ở E11-BE-01c",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-11",
+  "n": "16",
+  "spec": "RPA_DB §4.3 (`rows_loaded` = số link), TECH §4.4",
+  "gap": "Đơn vị đếm lệch: một dòng actors tạo hai link nên `rows_loaded` vượt `rows_total`",
+  "xl": "Đã sửa thiết kế (dự kiến PREMISE): đếm theo dòng nguồn, `stg_settlement_summary` ngoài bộ đếm; chốt ở E11-DB-01, E11-BE-01f",
+  "kind": "fix"
+ },
+ {
+  "epic": "E-11",
+  "n": "17",
+  "spec": "TECH §4.1 (bước 3), §4.5 #3",
+  "gap": "Production yêu cầu rehearsal đã ký cùng SHA-256, nhưng rehearsal ở staging (tệp đã che) còn production ở môi trường khác với tệp cuối có thể khác byte",
+  "xl": "Để mở: chốt bằng chứng rehearsal liên môi trường ở E11-DOC-03 (mặc định theo TECH khi cùng cơ sở dữ liệu)",
+  "kind": "open"
+ },
+ {
+  "epic": "E-11",
+  "n": "18",
+  "spec": "TECH §4.5, PAU_DB §4.4, ADR-014 §2",
+  "gap": "Wave 1 đã commit mà chưa finalize không có audit; chưa có bước điều hòa sequence mã sau khi giữ mã nguồn",
+  "xl": "Giả định (dự kiến PREMISE): thêm action `migration.wave_loaded`; finalize điều hòa sequence; chèn lịch sử trạng thái participant theo PAU_DB; chốt ở E11-BE-01d, E11-BE-01f",
+  "kind": "assume"
+ }
+]

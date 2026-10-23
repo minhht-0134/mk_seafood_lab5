@@ -1,0 +1,95 @@
+{
+ "plan": {
+  "E10-INF-02": {
+   "owner": "BE-1",
+   "hours": 17.5,
+   "swp": 5,
+   "n": 339
+  },
+  "E10-LOG-01": {
+   "owner": "BE-2",
+   "hours": 17.5,
+   "swp": 5,
+   "n": 342
+  },
+  "E01-DOC-01a": {
+   "owner": "BE-1",
+   "hours": 14.0,
+   "swp": 4,
+   "n": 57
+  },
+  "E02-CLR-02": {
+   "owner": "QA-1",
+   "hours": 3.5,
+   "swp": 1,
+   "n": 99
+  },
+  "E06-CLR-02": {
+   "owner": "QA-1",
+   "hours": 10.5,
+   "swp": 3,
+   "n": 231
+  },
+  "E09-CLR-04": {
+   "owner": "QA-1",
+   "hours": 3.5,
+   "swp": 1,
+   "n": 333
+  },
+  "E09-CLR-05": {
+   "owner": "QA-1",
+   "hours": 3.5,
+   "swp": 1,
+   "n": 334
+  },
+  "E11-CLR-06": {
+   "owner": "QA-1",
+   "hours": 3.5,
+   "swp": 1,
+   "n": 404
+  },
+  "E11-CLR-02": {
+   "owner": "QA-1",
+   "hours": 10.5,
+   "swp": 3,
+   "n": 400
+  },
+  "E11-CLR-04": {
+   "owner": "QA-1",
+   "hours": 3.5,
+   "swp": 1,
+   "n": 402
+  },
+  "E05-DOC-01b": {
+   "owner": "BE-2",
+   "hours": 10.5,
+   "swp": 3,
+   "n": 167
+  },
+  "E11-CLR-01": {
+   "owner": "QA-1",
+   "hours": 3.5,
+   "swp": 1,
+   "n": 399
+  },
+  "E11-CLR-03": {
+   "owner": "QA-1",
+   "hours": 3.5,
+   "swp": 1,
+   "n": 401
+  }
+ },
+ "carry_over": [
+  "E09-CLR-02",
+  "E10-DB-02",
+  "E01-DB-01",
+  "E10-AUD-01",
+  "E10-DB-03"
+ ],
+ "load": {
+  "BE-1": 54.3,
+  "BE-2": 56.0,
+  "FE-1": 0.0,
+  "QA-1": 56.0
+ }
+}

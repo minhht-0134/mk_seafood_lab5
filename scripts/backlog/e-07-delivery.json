@@ -1,0 +1,710 @@
+{
+  "epic": {
+    "key": "E-07",
+    "title": "E-07 Giao hàng (delivery)",
+    "goal": "Theo dõi giao hàng của từng giao dịch đã chốt: ghi từng lần (tối đa 5), tự hoàn tất khi khớp chính xác, đóng bằng ngoại lệ, và tra cứu chéo giao hàng với quyết toán.",
+    "specs": [
+      "FR-DLV-001..005",
+      "design/delivery",
+      "DLV_DB",
+      "ADR-006",
+      "ADR-005 (khóa ngày)"
+    ],
+    "out_of_scope": [
+      "Tạo dòng deliveries khi chốt giao dịch (nằm trong rpc_trade_confirm, E03-BE-04c)",
+      "Job cảnh báo giao hàng tồn đọng DLV_JOB_OVERDUE_SCAN và loại sự kiện delivery_overdue (E-08, FR-NTF-001)",
+      "Xác định 完納 đúng hạn và tính 完納奨励金 (E-06, chỉ đọc completed_at)",
+      "Báo cáo RPT-04 (E-09)",
+      "Sửa hoặc xóa lần giao hoặc ngoại lệ (chỉ thêm)",
+      "Xử lý khi số cần giao giảm dưới số đã giao ngoài hiện trạng (Q40 giữ hiện tại)",
+      "Ghi offline (ADR-009)",
+      "Nạp deliveries bằng di trú (E-11)"
+    ]
+  },
+  "issues": [
+    {
+      "key": "E07-DOC-01",
+      "type": "doc",
+      "parent_of": [
+        "E07-DOC-01a",
+        "E07-DOC-01b"
+      ],
+      "title": "Soạn API Design (BM-2-901-52) cho nhóm API delivery",
+      "goal": "Soạn API Design cho 5 API giao hàng, chia 2 sub-issue.",
+      "specs": [
+        "api-list §2.8 DLV",
+        "api-design/_index (L5)",
+        "BM-2-901-52",
+        "PREMISE (mục Thêm: API Design)"
+      ],
+      "dod": [
+        "Hoàn thành khi 2 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E07-DOC-01a",
+      "type": "doc",
+      "title": "API Design: danh sách, chi tiết và tra cứu chéo giao hàng (3 API)",
+      "goal": "DLV_LIST, DLV_GET, DLV_CROSS_REF.",
+      "specs": [
+        "api-list DLV_LIST, DLV_GET, DLV_CROSS_REF",
+        "DLV_DELIVERY_LIST_SPEC §4.3",
+        "DLV_DELIVERY_RECORD_SPEC §4.3",
+        "DLV_SETTLEMENT_CROSSCHECK_SPEC §4.3, §6 A2",
+        "Q47 (đã chốt)"
+      ],
+      "dod": [
+        "Mỗi API một file {API_ID}_API.md theo mẫu BM-2-901-52: request, response, quyền, mã lỗi, link SPEC và TECH",
+        "Chốt khóa response (đề xuất của SPEC, DQ-4): DLV_LIST (items[], counts, next_cursor), DLV_GET (delivery_code, status, completed_at, trade, lot, buyer, qty_effective, adjustments[], delivered_qty, part_count, parts[], exception), DLV_CROSS_REF (items[] gồm trade, lot, buyer, business_day (business_date, status, lock_no, locked_at), effective (qty_effective, unit_price_effective, amount_effective, adjustment_count, last_adjusted_at), incentives[] (kind, is_timely, incentive_jpy, computed_at), delivery (null hoặc delivery_code, status, completed_at, delivered_qty, parts[], exception); chốt parts[] và exception nằm trong delivery, và là null khi chưa có giao hàng, theo S-036 §4.3)",
+        "Chốt quyền: DLV_LIST cho ROLE-004 và ROLE-005 (ROLE-005 cần aal2); DLV_GET chỉ ROLE-004 (ROLE-005 không gọi được); DLV_CROSS_REF chỉ ROLE-005; LOT_SEARCH và TRD_LIST cho gợi ý của S-036 do E-02 và E-03 cung cấp",
+        "Chốt DLV_CROSS_REF: đúng một trong tradeId, tradeCode, deliveryCode, lotId (thiếu hoặc nhiều khóa thì VALIDATION); mã không tồn tại thì 200 với items rỗng; lotId nhận limit (mặc định 20, tối đa 100) và cursor theo trades.created_at giảm rồi id giảm; chốt việc E-7 của S-036 chỉ nhận adjustment_count và last_adjusted_at (không có loại bút toán, S-036 OQ-3 còn mở) và nút Tải thêm cho lot có hơn 20 giao dịch (OQ-6 còn mở)",
+        "Chốt nghĩa của q ở DLV_LIST: khớp tiền tố không phân biệt hoa thường trên delivery_code, trade_code hoặc lot_code, tối đa 30 ký tự; counts theo q và không theo status; ô tìm ở S-034 ghi 'mã giao dịch' nhưng dùng cùng tham số q (ghi vào chỗ hở)",
+        "Chốt hai nhánh \"không có liên kết\" của DLV_CROSS_REF: mã hoặc giao dịch không tồn tại (items rỗng) và giao dịch có nhưng chưa có giao hàng (delivery null theo S-036 §4.3); ghi cả hai nguồn (REQ-001 FR-DLV-004 AC3 và api-list nói chung \"không có liên kết thì rỗng\")",
+        "Chốt hiển thị tiến độ khi qty_effective bằng 0 (逆仕訳 và Q40): S-032 F-5 và S-033 F-1 chia cho qty_effective cho NaN hoặc vô cực khi mẫu số 0; ẩn tỷ lệ phần trăm hoặc dùng giá trị hữu hạn được xác nhận, vẫn hiện số kg và chênh lệch, không tự đổi trạng thái",
+        "Ghi nhận S-034 §4.2 nói server từ chối status ngoài waiting và in_progress: đó là ràng buộc của màn S-034, không phải của DLV_LIST (S-032 dùng cả bốn trạng thái)"
+      ],
+      "depends": [],
+      "parent": "E07-DOC-01"
+    },
+    {
+      "key": "E07-DOC-01b",
+      "type": "doc",
+      "title": "API Design: ghi lần giao và ghi ngoại lệ (2 API)",
+      "goal": "DLV_PART_RECORD, DLV_EXCEPTION_RECORD.",
+      "specs": [
+        "api-list DLV_PART_RECORD, DLV_EXCEPTION_RECORD",
+        "DLV_DELIVERY_RECORD_TECH §4.2..§4.6",
+        "DLV_EXCEPTION_FORM_SPEC §4.3",
+        "Q39, Q40 (đã chốt), Q92 và idempotency (xem E07-CLR-01, E07-CLR-02)"
+      ],
+      "dod": [
+        "File {API_ID}_API.md cho từng API: request (qty dạng chuỗi, note; exceptionType, qty, reason, evidencePaths), response (ok, delivery_id, part_no, delivered_qty, remaining_qty, status, completed_at; ok, exception_id, status, recorded_at), quyền ROLE-004, mã lỗi",
+        "Chốt mã lỗi: VALIDATION (kèm fields.qty, fields.note, fields.exceptionType, fields.reason, fields.evidencePaths), DELIVERY_QTY_EXCEEDED (params [tổng sau cộng, qty_effective]), DELIVERY_PART_LIMIT, INVALID_STATE (params [status]), DAY_LOCKED (params [business_date, status]), NOT_FOUND; ánh xạ HTTP 409 và 422 do hạ tầng chung (E10-API-ERROR-MAPPING)",
+        "Chốt tên action audit delivery.record_part, delivery.record_exception, guard.write_blocked (đề xuất của TECH); kiểm đường dẫn chứng cứ thuộc người gọi cùng hợp đồng với E04-DOC-01a (Q31)",
+        "Chốt hợp đồng khóa dùng chung với E04-BE-03a: deliveries FOR UPDATE sau trades và trước business_days FOR SHARE, advisory của write_audit cuối (rpc_adjustment_decide khóa deliveries, Q-DLV-T2); chốt idempotency theo quyết định ở E07-CLR-02",
+        "Ghi nhận Event của S-035 chưa cập nhật fields.qty theo Q39 (bảng Error Handling chỉ nêu exceptionType, reason, evidencePaths)",
+        "Ghi cả hai nguồn về lỗi trigger của delivery_parts và delivery_exceptions: DLV_DELIVERY_RECORD_TECH §4.4 bước 3 và §4.6 ghi 500, còn ADJ_LOCKED_DAY_GUARD_TECH §4.4 và bảng \"Trigger anh em\" dùng cùng hợp đồng hint và detail để ánh xạ 409; chốt cùng E10-API-ERROR-MAPPING",
+        "Ghi nhận S-033 Data Mapping ghi qty dạng số và completed_at là now(), khác TECH (qty chuỗi, completed_at là clock_timestamp()); theo TECH vì completed_at là mốc 完納 của E-06"
+      ],
+      "depends": [
+        "E07-CLR-01",
+        "E07-CLR-02"
+      ],
+      "parent": "E07-DOC-01"
+    },
+    {
+      "key": "E07-DB-01",
+      "type": "db",
+      "special": "完納奨励金 (tỷ lệ có phiên bản)",
+      "title": "Migration deliveries: bảng giao hàng, mã DLV và chỉ mục",
+      "goal": "Bảng giao hàng, một dòng mỗi giao dịch confirmed, mã nghiệp vụ DLV-NNNNNN.",
+      "specs": [
+        "DLV_DB §4.1, §5",
+        "FR-DLV-001 AC1, AC5",
+        "FR-DLV-002",
+        "Q47 (đã chốt)"
+      ],
+      "dod": [
+        "Cột theo DLV_DB §4.1: trade_id (duy nhất, khóa ngoại trades, ON DELETE RESTRICT), status chỉ waiting, in_progress, completed, exception (mặc định waiting), completed_at, created_at mặc định now(), delivery_code",
+        "CHECK (status là completed) bằng (completed_at có giá trị); sequence delivery_code_seq; delivery_code mặc định DLV- cộng sáu chữ số (không cắt khi vượt 999999, cùng cách xử lý chỗ hở 19 của E-04), duy nhất, CHECK mẫu ^DLV-[0-9]{6,}$, không UPDATE sau khi chèn; rpc_trade_confirm chèn mà không truyền mã (E03-BE-04c)",
+        "Chỉ mục: duy nhất theo trade_id (tra từ giao dịch sang giao hàng, p95 không quá 2 giây), một phần theo (status, created_at) khi status là waiting hoặc in_progress (job delivery_overdue và RPT-04), duy nhất theo delivery_code (tra tiền tố)",
+        "Bảng duy nhất trong nhóm được UPDATE (cột status và completed_at), chỉ bởi hai RPC ghi lần giao và ngoại lệ; completed và exception là trạng thái cuối; không có RPC nào đổi trạng thái khác (xử lý khi số cần giao giảm là Q40, giữ hiện tại)",
+        "RLS bật, SELECT cho ROLE-004 và ROLE-005; không grant ghi cho authenticated; thu quyền delete, truncate khỏi service_role; thêm ROLE-004 vào policy SELECT của lots và trades (DLV_DB §5, _index §5.2) để các màn giao hàng đọc được lot và giao dịch",
+        "Khi thêm ROLE-004 vào policy SELECT của lots và trades giữ nguyên các nhánh quyền cũ của policy (không thay toàn bộ policy bằng chỉ ROLE-004)"
+      ],
+      "depends": [
+        "E03-DB-01",
+        "E02-DB-01",
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05",
+        "E01-DB-01"
+      ]
+    },
+    {
+      "key": "E07-DB-02",
+      "type": "db",
+      "special": "khóa ngày hai lớp (F-018)",
+      "title": "Migration delivery_parts: lần giao, chỉ thêm, tối đa 5 lần",
+      "goal": "Mỗi lần ROLE-004 ghi số lượng đã giao; không sửa, không xóa.",
+      "specs": [
+        "DLV_DB §4.2, §6",
+        "FR-DLV-005 AC1, AC2",
+        "Q-DLV-T3 (xem E07-CLR-02)"
+      ],
+      "dod": [
+        "Cột theo DLV_DB §4.2: delivery_id (khóa ngoại deliveries), part_no SMALLINT, qty NUMERIC(12,3), business_day_id, recorded_by, recorded_at, note",
+        "CHECK part_no từ 1 đến 5, qty lớn hơn 0, note rỗng hoặc tối đa 200 ký tự; duy nhất (delivery_id, part_no); chỉ mục theo business_day_id; ba khóa ngoại ON DELETE RESTRICT (deliveries, business_days, profiles)",
+        "Trigger deny_update_delete() chặn UPDATE và DELETE mọi role (ghi sai thì đóng bằng ngoại lệ); thu quyền update, delete, truncate khỏi service_role",
+        "Trigger guard_locked_business_day() BEFORE INSERT chặn khi ngày locked hoặc reopen_requested với hint DAY_LOCKED và params [business_date, status]; ngày reopened cho ghi; hàm dùng chung thuộc E10-CORE-DB; trigger là lưới cuối nếu RPC quên kiểm ngày",
+        "RLS bật, SELECT cho ROLE-004 và ROLE-005, ghi qua RPC; số lượng đã giao cộng dồn không có cột lưu, luôn tính bằng tổng qty theo delivery_id khi đọc; cột idempotency theo quyết định ở E07-CLR-02 (hiện chưa có)"
+      ],
+      "depends": [
+        "E07-DB-01",
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05",
+        "E07-CLR-02"
+      ]
+    },
+    {
+      "key": "E07-DB-03",
+      "type": "db",
+      "special": "khóa ngày hai lớp (F-018)",
+      "title": "Migration delivery_exceptions: ngoại lệ đóng vĩnh viễn một giao hàng",
+      "goal": "Một ngoại lệ mỗi giao hàng, bốn loại cố định, có số lượng, lý do và chứng cứ.",
+      "specs": [
+        "DLV_DB §4.3, §6",
+        "FR-DLV-003 AC1, AC2, AC4, AC5",
+        "Q39 (đã chốt), Q92 (xem E07-CLR-01)"
+      ],
+      "dod": [
+        "Cột theo DLV_DB §4.3: delivery_id (duy nhất), exception_type chỉ shortage, excess, return, partial_cancel, qty NUMERIC(12,3) lớn hơn 0, reason không rỗng và tối đa 500 ký tự, evidence_paths mảng text mặc định rỗng, business_day_id, recorded_by, recorded_at",
+        "Chỉ mục duy nhất theo delivery_id, chỉ mục theo (business_day_id, exception_type) cho RPT-04; ba khóa ngoại ON DELETE RESTRICT; số lượng chỉ để ghi nhận (không cộng vào số đã giao, không so với qty_effective, trừ khi E07-CLR-01 quyết định khác)",
+        "Trigger deny_update_delete() và thu quyền update, delete, truncate khỏi service_role (không sửa, không hủy ngoại lệ); trigger guard_locked_business_day() BEFORE INSERT như delivery_parts",
+        "RLS bật, SELECT cho ROLE-004 và ROLE-005, ghi qua RPC; chứng cứ tùy chọn, bucket và thời hạn lưu chờ Q31 (không chặn migration)"
+      ],
+      "depends": [
+        "E07-DB-01",
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05",
+        "E07-CLR-01"
+      ]
+    },
+    {
+      "key": "E07-BE-01",
+      "type": "be",
+      "special": "完納奨励金 (tỷ lệ có phiên bản)",
+      "title": "DLV_LIST và DLV_GET: danh sách, số đếm, tìm theo mã và chi tiết giao hàng",
+      "goal": "Đọc giao hàng cho S-032, S-033, S-034, S-035: danh sách kèm số đếm và chi tiết một giao hàng (gộp theo D9; hai route có quyền khác nhau).",
+      "specs": [
+        "api-list DLV_LIST",
+        "DLV_DELIVERY_LIST_SPEC §4.3, §6 A1..A3",
+        "DLV_EXCEPTION_LIST_SPEC §4.3",
+        "FR-DLV-001 AC5",
+        "api-list DLV_GET",
+        "DLV_DELIVERY_RECORD_SPEC §4.3, §6 A2",
+        "DLV_EXCEPTION_FORM_SPEC §4.3",
+        "FR-DLV-005"
+      ],
+      "dod": [
+        "DLV_LIST: Route GET: 401, 403 (role ngoài ROLE-004 và ROLE-005), ROLE-005 cần aal2 (MFA_REQUIRED), ROLE-004 không bắt MFA; status nhận một hoặc nhiều giá trị phân tách dấu phẩy trong waiting, in_progress, completed, exception (giá trị khác thì VALIDATION); q tối đa 30 ký tự (quá thì VALIDATION); limit, cursor",
+        "q khớp tiền tố không phân biệt hoa thường trên delivery_code, trade_code hoặc lot_code; mã không tồn tại thì danh sách rỗng, không lỗi; keyset 20 dòng theo created_at giảm rồi id giảm, cursor là cặp (created_at, id) (mọi ngày nghiệp vụ, không lọc ngày)",
+        "items[] gồm id, delivery_code, status, created_at, completed_at, trade (trade_code, trade_type, qty), lot (lot_code, product_name), buyer (code, name), qty_effective lấy từ view giá trị hiệu lực (không dùng trades.qty), delivered_qty (tổng delivery_parts), part_count, exception (exception_type, reason, người ghi, recorded_at khi có); counts gồm waiting, in_progress, completed, exception theo q và không theo status, luôn trả",
+        "Chỉ đọc; không ghi; ROLE-005 chỉ đọc (không có API ghi)",
+        "DLV_GET: Route GET: 401, 403 (chỉ ROLE-004; ROLE-005 không gọi được), id không khớp số hoặc không tồn tại thì NOT_FOUND",
+        "Trả id, delivery_code, status, completed_at, trade (trade_code, trade_type, qty), lot (lot_code, product_name), buyer (code, name), qty_effective (view giá trị hiệu lực, không dùng trades.qty), delivered_qty, part_count, parts[] sắp part_no tăng (part_no, qty, business_date, người ghi, recorded_at, note), exception khi có",
+        "adjustments[] gồm entry_type và created_at của các bút toán điều chỉnh của giao dịch để S-033 hiển thị loại bút toán mới nhất và số lần; không có bút toán thì rỗng",
+        "Chỉ đọc; ngày nghiệp vụ trả ISO, FE tự chuyển định dạng"
+      ],
+      "depends": [
+        "E07-DB-01",
+        "E07-DB-02",
+        "E07-DB-03",
+        "E04-DB-03",
+        "E07-DOC-01a",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06",
+        "E04-DB-02"
+      ]
+    },
+    {
+      "key": "E07-BE-03",
+      "type": "be",
+      "special": "khóa ngày hai lớp (F-018)",
+      "title": "DLV_PART_RECORD: rpc_delivery_record_part (ghi lần giao, xác định 完納)",
+      "goal": "ROLE-004 ghi từng lần giao, cộng dồn, tối đa 5 lần, tự hoàn tất khi tổng khớp chính xác.",
+      "specs": [
+        "FR-DLV-001 AC2, AC3",
+        "FR-DLV-002 AC1..AC3",
+        "FR-DLV-005 AC1..AC3",
+        "DLV_DELIVERY_RECORD_TECH §4.2..§4.6",
+        "ADR-006",
+        "BP-c"
+      ],
+      "dod": [
+        "Route: 401, 403 (không phải ROLE-004; ROLE-005 POST thì 403), 415 và 400; id không khớp ^\\d{1,12}$ thì VALIDATION; qty phải là chuỗi (số JSON bị từ chối), khớp ^\\d{1,9}(\\.\\d{1,3})?$ và lớn hơn 0 (thiếu thì M_COM_009, không dương thì M_COM_011, quá 3 số lẻ hoặc quá lớn thì M_COM_012 qua fields.qty); note quá 200 ký tự thì fields.note (M_COM_010); quy đổi sang số nguyên phần nghìn, không qua float; ROLE-004 không kiểm aal",
+        "RPC security definer kiểm has_role ROLE-004 (FORBIDDEN, không audit); khóa hàng deliveries FOR UPDATE trước khi đếm và cộng; không có thì NOT_FOUND; status completed hoặc exception thì INVALID_STATE kèm params [status], không audit",
+        "Ngày ghi là ngày nghiệp vụ hiện tại (không phải ngày của giao dịch): lock_day_open(current_business_day()) FOR SHARE; ngày locked hoặc reopen_requested thì write_audit guard.write_blocked và trả {ok:false, code DAY_LOCKED, params [business_date, status]} (không raise để audit được commit); reopened cho ghi (chỉ gặp khi hôm nay bị 締め nhầm rồi mở lại); thứ tự khóa deliveries, business_days FOR SHARE, advisory write_audit cuối",
+        "Kiểm số lần và số lượng: n lần đã có bằng 5 thì DELIVERY_PART_LIMIT (M_DLV_001, hướng dẫn ghi ngoại lệ); tổng đã giao cộng qty lớn hơn qty_effective thì DELIVERY_QTY_EXCEEDED kèm params [tổng sau cộng, qty_effective] (M_DLV_002); qty_effective là giá trị hiệu lực sau 差額記録 và 逆仕訳, không phải trades.qty; so sánh numeric(12,3) chính xác",
+        "Số cần giao đã bị điều chỉnh xuống không lớn hơn số đã giao khi chưa completed (Q40 giữ hiện tại): sau khi các guard role, tồn tại, trạng thái, ngày và số lần đã qua, mọi qty lớn hơn 0 đều DELIVERY_QTY_EXCEEDED (nếu đã đủ 5 lần thì DELIVERY_PART_LIMIT trước), giao hàng không tự completed hay exception, ROLE-004 đóng bằng ngoại lệ",
+        "Ghi: INSERT delivery_parts với part_no là n cộng 1, business_day_id là ngày hiện tại, recorded_by là người gọi; tổng bằng đúng qty_effective thì status completed và completed_at là clock_timestamp() (thỏa CHECK), ngược lại waiting chuyển in_progress; completed_at là mốc duy nhất 完納奨励金 dùng để xét đúng hạn, không quyết định đúng hay quá hạn ở đây",
+        "write_audit delivery.record_part (before là dòng deliveries, after gồm part_no, qty, delivered_qty, status, completed_at; kèm note) là khóa cuối; không outbox; vi phạm chỉ mục duy nhất, CHECK hoặc lỗi lạ là lưới an toàn (rollback, 500 kèm log ERROR và pgCode); exception của trigger guard_locked_business_day có hint DAY_LOCKED được hạ tầng chung ánh xạ 409 với params (ADJ_LOCKED_DAY_GUARD_TECH §4.4), trigger raise nên chỉ có log, không có audit commit (audit chặn do RPC kiểm trước); response gồm ok, delivery_id, part_no, delivered_qty, remaining_qty, status, completed_at",
+        "Gửi lại sau timeout hiện chưa có idempotency: lần hai thành một lần giao mới; quyết định ở E07-CLR-02"
+      ],
+      "depends": [
+        "E07-DB-02",
+        "E07-DOC-01b",
+        "E04-DB-03",
+        "E10-AUD-02",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E07-CLR-02"
+      ]
+    },
+    {
+      "key": "E07-BE-04",
+      "type": "be",
+      "special": "khóa ngày hai lớp (F-018)",
+      "title": "DLV_EXCEPTION_RECORD: rpc_delivery_record_exception (ngoại lệ đóng vĩnh viễn)",
+      "goal": "ROLE-004 ghi một trong bốn loại ngoại lệ, kèm số lượng, lý do, chứng cứ tùy chọn; giao hàng thành exception.",
+      "specs": [
+        "FR-DLV-003 AC1..AC5",
+        "DLV_DELIVERY_RECORD_TECH §4.6 bước 4",
+        "DLV_EXCEPTION_FORM_SPEC §4.2, §4.3, §6 A1..A5",
+        "Q39 (đã chốt), Q92 (xem E07-CLR-01)"
+      ],
+      "dod": [
+        "Route: 401, 403, 415, 400; exceptionType ngoài bốn giá trị thì VALIDATION fields.exceptionType; qty chuỗi khớp ^\\d{1,9}(\\.\\d{1,3})?$ và lớn hơn 0 (M_COM_009, M_COM_011, M_COM_012); reason rỗng sau trim thì fields.reason (M_COM_009), quá 500 ký tự thì M_COM_010; evidencePaths quá 5 phần tử thì fields.evidencePaths",
+        "Thứ tự xử lý như E07-BE-03 (TECH §4.3 rồi §4.4): has_role ROLE-004 (FORBIDDEN, không audit), khóa deliveries FOR UPDATE, không có thì NOT_FOUND, giao hàng không còn waiting hoặc in_progress thì INVALID_STATE (M_DLV_003, không audit), rồi mới kiểm ngày hiện tại (locked hoặc reopen_requested thì DAY_LOCKED kèm audit guard.write_blocked); RPC security definer với search_path rỗng và tên đầy đủ schema (ADR-002)",
+        "Đường dẫn chứng cứ thuộc người gọi và tệp đã tồn tại (cùng hợp đồng với E04-BE-01, Q31); chứng cứ tùy chọn, mảng rỗng được",
+        "INSERT delivery_exceptions (kèm qty) và status thành exception (cuối); qty chỉ ghi nhận, không cộng vào delivered_qty, không đổi qty_effective, không so với phần còn lại (theo quyết định ở E07-CLR-01); giao hàng exception thì 完納奨励金 coi là không đúng hạn; không sửa, không hủy, không quay lại",
+        "write_audit delivery.record_exception (kèm exception_type, qty, lý do) là khóa cuối; không outbox; response gồm ok, exception_id, status, recorded_at; lỗi bất ngờ thì rollback và 500 kèm log ERROR và pgCode; exception trigger có hint DAY_LOCKED thì 409 như E07-BE-03"
+      ],
+      "depends": [
+        "E07-DB-03",
+        "E07-DOC-01b",
+        "E10-AUD-02",
+        "E10-SYS-02",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E07-CLR-01"
+      ]
+    },
+    {
+      "key": "E07-BE-05",
+      "type": "be",
+      "special": "完納奨励金 (tỷ lệ có phiên bản)",
+      "title": "DLV_CROSS_REF: tra cứu chéo giao hàng và quyết toán",
+      "goal": "ROLE-005 tra theo giao dịch, lot hoặc giao hàng, chỉ đọc, mọi ngày.",
+      "specs": [
+        "FR-DLV-004 AC1..AC5",
+        "DLV_SETTLEMENT_CROSSCHECK_SPEC §4.3, §6 A1..A5",
+        "api-list DLV_CROSS_REF",
+        "Q47 (đã chốt)"
+      ],
+      "dod": [
+        "Route GET: 401, 403 (chỉ ROLE-005), aal2 (MFA_REQUIRED); query đúng một trong tradeId, tradeCode, deliveryCode, lotId, thiếu hoặc nhiều hơn một thì VALIDATION; hai trường hợp riêng: mã hoặc giao dịch không tồn tại thì 200 với items rỗng (không lỗi); giao dịch tồn tại nhưng chưa có giao hàng thì vẫn trả item kèm thông tin giao dịch với delivery bằng null (S-036 hiện M_COM_021 \"Giao dịch chưa có giao hàng\" thay khối giao hàng)",
+        "Mỗi item gồm trade (id, trade_code, trade_type, qty, unit_price), lot, buyer, business_day (business_date, status, lock_no và locked_at của lần khóa hiện hành), effective (qty_effective, unit_price_effective, amount_effective, adjustment_count, last_adjusted_at; từ view giá trị hiệu lực và bút toán), incentives[] (mọi dòng original và delta của giao dịch: kind, is_timely, incentive_jpy có dấu, computed_at; không lọc theo lần khóa), delivery (delivery_code, status, completed_at, delivered_qty), parts[], exception (kèm số tệp chứng cứ, không trả URL)",
+        "Một giao dịch có tối đa một giao hàng; tra theo lotId trả nhiều giao dịch ở mọi trạng thái (kể cả giao dịch chưa confirmed, delivery bằng null) với limit mặc định 20 (tối đa 100), cursor và next_cursor, sắp trades.created_at giảm rồi id giảm; ba khóa còn lại trả tối đa một giao dịch, không phân trang",
+        "Không giới hạn ngày, kể cả ngày đã khóa lâu; ngày locked, reopen_requested, reopened chỉ hiển thị, không chặn; truy vấn đi qua các chỉ mục duy nhất của trade_id, delivery_code, trade_code, lot_code, không quét theo ngày; mục tiêu p95 không quá 2 giây (NFR-PERF-01) có ca đo ở E07-QA-04",
+        "Chỉ đọc; E-7 của màn chỉ nhận adjustment_count và last_adjusted_at (không có loại bút toán, S-036 OQ-3 còn mở)"
+      ],
+      "depends": [
+        "E07-DB-01",
+        "E07-DB-02",
+        "E07-DB-03",
+        "E04-DB-03",
+        "E06-DB-01",
+        "E07-DOC-01a",
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06"
+      ]
+    },
+    {
+      "key": "E07-FE-01",
+      "type": "fe",
+      "special": "完納奨励金 (tỷ lệ có phiên bản)",
+      "title": "S-032 DLV_DELIVERY_LIST: danh sách trạng thái giao hàng",
+      "goal": "Màn thẻ giao hàng của ROLE-004 (ghi) và ROLE-005 (chỉ đọc); 5 trạng thái (normal, exception-tab, day-locked, role-005, empty).",
+      "specs": [
+        "DLV_DELIVERY_LIST_SPEC (5 trạng thái)",
+        "FR-DLV-001, FR-DLV-005"
+      ],
+      "dod": [
+        "Mở màn: proxy xử lý hết phiên (M_COM_004, M_COM_005), tài khoản bị khóa (M_PAU_002), role ngoài phạm vi (về trang chủ, M_COM_006); ROLE-004 không bắt MFA (aal2 không áp dụng); ROLE-005 cần aal2 (bước TOTP, M_COM_019, xong quay lại); đủ quyền thì skeleton 6 thẻ, gọi song song SYS_ME và DLV_LIST (status theo URL hoặc waiting, q theo URL); status ngoài bốn giá trị thì dùng mặc định",
+        "E-1 bốn tab (Đang chờ mặc định, Đang giao, Hoàn tất, Ngoại lệ) kèm badge theo counts và q; E-2 tìm sau 400 ms hoặc Enter, trim, tối đa 30 ký tự, hủy request cũ, cập nhật ?q=; E-3 làm mới kèm giờ nhận response; đổi tab bỏ cursor, giữ q, cập nhật ?status= bằng replace; F-14 Tải thêm 20 thẻ; F-12 M_COM_021 kèm gợi ý theo tab; F-13 'Hiển thị a / b'",
+        "Thẻ: mã giao hàng, mã giao dịch và loại (せり hoặc 相対取引), chip trạng thái, lot và mặt hàng, bên mua, đã giao trên cần giao (định dạng #,##0.###, phần trăm bằng floor, thanh tiến độ chặn 100%), lần đã ghi N/5, giờ tạo (hôm nay chỉ HH:mm), tag đã điều chỉnh khi qty_effective khác số lượng giao dịch, F-9 '5/5 chưa khớp' khi part_count bằng 5 và in_progress, F-11 chi tiết ngoại lệ cho thẻ exception (loại, lý do cắt 120 ký tự, người ghi, giờ)",
+        "F-10 Ghi nhận chỉ cho thẻ waiting hoặc in_progress và chỉ ROLE-004 (ẩn với ROLE-005); ngày hiện tại locked hoặc reopen_requested thì disabled kèm tooltip M_COM_016 và banner D-1 khóa (ROLE-005 chỉ thấy banner chỉ xem); mở /deliveries/{id} cùng tab; thẻ Hoàn tất chỉ hiện chip, tổng và giờ completed_at",
+        "VALIDATION thì inline dưới E-2 (M_COM_010); MFA_REQUIRED lúc đang dùng với ROLE-005 thì bước TOTP và M_COM_019 rồi quay lại cùng URL (tab và q), ROLE-004 không bị ép MFA; Lỗi dùng chung: SESSION_EXPIRED hoặc UNAUTHENTICATED (M_COM_005, M_COM_004, nội dung đang nhập mất vì không lưu nháp), FORBIDDEN (M_COM_006 rồi về trang chủ), mất mạng hoặc timeout (M_COM_003), 503 (M_COM_002), 500 hoặc mã lạ (M_COM_001 kèm requestId); màn bắt buộc online, không có hàng đợi offline (ADR-009); không tự làm mới định kỳ",
+        "Tiến độ khi qty_effective bằng 0: không hiện NaN hay vô cực (theo quyết định ở E07-DOC-01a), vẫn hiện số kg và nhánh Q40"
+      ],
+      "depends": [
+        "E07-BE-01",
+        "E10-SYS-01",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01"
+      ]
+    },
+    {
+      "key": "E07-FE-02",
+      "type": "fe",
+      "special": "完納奨励金 (tỷ lệ có phiên bản)",
+      "parent_of": [
+        "E07-FE-02a",
+        "E07-FE-02b"
+      ],
+      "title": "S-033 DLV_DELIVERY_RECORD: ghi nhận giao hàng từng lần",
+      "goal": "Màn ghi lần giao của ROLE-004; 6 trạng thái wireframe (normal, qty-exceeded, completed, part-limit, adjusted-below, day-locked) cộng nhánh đã ngoại lệ, chia 2 sub-issue.",
+      "specs": [
+        "DLV_DELIVERY_RECORD_SPEC (6 trạng thái wireframe và bảng 'Hiển thị theo nhánh')",
+        "FR-DLV-001, FR-DLV-002, FR-DLV-005"
+      ],
+      "dod": [
+        "Hoàn thành khi 2 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E07-FE-02a",
+      "type": "fe",
+      "special": "完納奨励金 (tỷ lệ có phiên bản)",
+      "title": "S-033a: thông tin giao dịch, tiến độ, lịch sử lần giao và banner theo nhánh",
+      "goal": "Phần hiển thị của màn ghi lần giao.",
+      "specs": [
+        "DLV_DELIVERY_RECORD_SPEC §4.1 (C..F, H), §5 (Initializing), §6 A1, A2, A7, A8, A10, 'Hiển thị theo nhánh'"
+      ],
+      "dod": [
+        "Mở màn: proxy xử lý hết phiên (M_COM_004, M_COM_005), tài khoản bị khóa (M_PAU_002), role ngoài phạm vi (về trang chủ, M_COM_006); ROLE-004 không bắt MFA (aal2 không áp dụng) (ROLE-005 bị đưa về trang chủ); mở /deliveries/{id} gọi song song SYS_ME và DLV_GET; id sai hoặc không tồn tại thì banner M_COM_007 (giao hàng), ẩn E đến I, nút quay lại vẫn dùng được",
+        "E-1..E-7: mã giao dịch, loại, lot và mặt hàng, bên mua, số lượng giao dịch gốc (chỉ để đối chiếu), số cần giao (qty_effective, kèm 'chưa điều chỉnh' hoặc 'đã điều chỉnh n lần, gốc đến hiệu lực, loại bút toán mới nhất 差額記録 hoặc 逆仕訳, giờ'), chip trạng thái kèm giờ hoàn tất; F-1 đã giao trên cần giao kèm thanh min(đã giao chia cần giao, 1), F-2 còn lại (âm thì '−x kg đã giao vượt'), F-3 'Lần thứ N/5 còn lại x kg' (M_DLV_004) hoặc 'Đã dùng n/5 lần', F-4 quy tắc hoàn tất",
+        "Bảng lịch sử H sắp part_no tăng: lần n/5, số lượng, ngày nghiệp vụ ghi nhận (DD/MM/YYYY), người ghi, giờ, ghi chú (— khi rỗng), dòng tổng đã giao; chưa có lần nào thì một dòng 'Chưa có lần giao' (M_COM_021)",
+        "Nhánh trạng thái tính ở FE theo thứ tự ưu tiên: (1) completed, (2) exception, (3) ngày hiện tại locked hoặc reopen_requested, (4) đã giao không nhỏ hơn cần giao khi chưa completed (Q40), (5) part_count bằng 5, (6) ghi được; bảng 'Hiển thị theo nhánh' đúng cho D-1 (M_DLV_008, M_DLV_003, M_COM_016, M_DLV_009, M_DLV_001 kèm 'còn thiếu x kg'), F-3, G-1, G-6, G-7 và dialog I; chỉ nhánh (6) cho nhập",
+        "Q40 giữ hiện tại: giao hàng đã completed rồi mới bị điều chỉnh thì giữ completed và F-2 hiện chênh lệch; nhánh (4) khóa ghi nhưng vẫn cho ghi ngoại lệ; Lỗi dùng chung: SESSION_EXPIRED hoặc UNAUTHENTICATED (M_COM_005, M_COM_004, nội dung đang nhập mất vì không lưu nháp), FORBIDDEN (M_COM_006 rồi về trang chủ), mất mạng hoặc timeout (M_COM_003), 503 (M_COM_002), 500 hoặc mã lạ (M_COM_001 kèm requestId); màn bắt buộc online, không có hàng đợi offline (ADR-009); không tự làm mới định kỳ",
+        "Thanh tiến độ F-1 và phần trăm khi qty_effective bằng 0: không hiện NaN hay vô cực (theo quyết định ở E07-DOC-01a); kiểm reversal với đã giao bằng 0 và lớn hơn 0"
+      ],
+      "depends": [
+        "E07-BE-01",
+        "E10-SYS-01",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01"
+      ],
+      "parent": "E07-FE-02"
+    },
+    {
+      "key": "E07-FE-02b",
+      "type": "fe",
+      "special": "khóa ngày hai lớp (F-018)",
+      "title": "S-033b: nhập và ghi lần giao, dialog đủ 5 lần, các lỗi ghi",
+      "goal": "G-1..G-7, dialog I và xử lý lỗi của DLV_PART_RECORD.",
+      "specs": [
+        "DLV_DELIVERY_RECORD_SPEC §4.1 (G, I), §4.2, §5 (G-1, G-7, G-3, I-4, Error Handling), §6 A5",
+        "FR-DLV-001 AC2, AC3",
+        "FR-DLV-005 AC1, AC2"
+      ],
+      "dod": [
+        "G-1 số lượng lần này (inputmode decimal, trống khi mở), kiểm theo thứ tự khi rời ô và khi bấm G-7: (1) rỗng thì M_COM_009; (2) không khớp ^\\d+(\\.\\d+)?$ hoặc không dương thì M_COM_011; (3) quá 3 số lẻ hoặc không nhỏ hơn 1.000.000.000 thì M_COM_012; (4) đã giao cộng G-1 lớn hơn cần giao thì G-3 (M_DLV_002 kèm liên kết 'ghi ngoại lệ dư thừa'); so sánh bằng số nguyên phần nghìn, không dùng float; không tự điền số còn lại; G-4 ghi chú tối đa 200 ký tự (M_COM_010 khi dán quá dài, rỗng thì gửi null)",
+        "G-7 Ghi nhận (chỉ nhánh ghi được): lỗi thì focus ô lỗi đầu tiên và dừng; hợp lệ thì khóa G-5, G-6, G-7 kèm spinner, gọi DLV_PART_RECORD (qty dạng chuỗi, note); status in_progress thì toast M_DLV_006 (lần, mã giao dịch), xóa G-1 và G-4, gọi lại DLV_GET; status completed thì banner M_DLV_008 (không toast), gọi lại DLV_GET (lịch sử H có lần cuối, tổng, part_count, completed_at), G-1 và G-7 khóa, G-6 ẩn",
+        "Lỗi: DELIVERY_QTY_EXCEEDED thì G-3 hiện M_DLV_002 theo params, giữ G-1, gọi lại DLV_GET; DELIVERY_PART_LIMIT thì mở dialog I (M_DLV_001, tóm tắt đã giao và còn thiếu, nút Đóng, nút Ghi ngoại lệ) rồi gọi lại DLV_GET; dialog I mở một lần khi tải màn ở nhánh 5/5; INVALID_STATE thì gọi lại DLV_GET và hiện banner theo nhánh mới (M_DLV_003 hoặc M_DLV_008); DAY_LOCKED thì mở component S-024 với M_ADJ_010 và gợi ý M_ADJ_013, không có nút yêu cầu điều chỉnh, giữ G-1 và G-4, đóng thì gọi lại SYS_ME để hiện M_COM_016 và khóa G-7",
+        "VALIDATION thì message theo fields.qty hoặc fields.note dưới ô, banner M_COM_008 nếu không có fields; NOT_FOUND thì M_COM_007; BAD_REQUEST hoặc UNSUPPORTED_MEDIA_TYPE thì M_COM_018; 500 thì kết quả không chắc, gọi lại DLV_GET trước khi cho ghi lại; G-6 và liên kết G-3 và I-5 sang /deliveries/{id}/exception?from=record, hỏi M_COM_020 khi G-1 hoặc G-4 có nội dung; G-5, C-4, B-1, A-7 khi có nội dung cũng hỏi M_COM_020",
+        "Chống bấm đôi bằng khóa nút; idempotency theo quyết định ở E07-CLR-02 (nếu thêm key thì sinh và giữ key khi retry, xử lý replay và CONFLICT theo hợp đồng, không coi hành vi hiện tại là kết quả cuối); độ dài ghi chú 200 ký tự chờ xác nhận (OQ-3)"
+      ],
+      "depends": [
+        "E07-FE-02a",
+        "E07-BE-03",
+        "E04-FE-03"
+      ],
+      "parent": "E07-FE-02"
+    },
+    {
+      "key": "E07-FE-03",
+      "type": "fe",
+      "special": "khóa ngày hai lớp (F-018)",
+      "title": "S-034 DLV_EXCEPTION_LIST: danh sách giao hàng chờ xử lý ngoại lệ",
+      "goal": "Màn lọc của ROLE-004 cho giao hàng còn mở; 5 trạng thái (normal, recorded, empty, error, day-locked).",
+      "specs": [
+        "DLV_EXCEPTION_LIST_SPEC (5 trạng thái)",
+        "FR-DLV-003 AC3"
+      ],
+      "dod": [
+        "Mở màn: proxy xử lý hết phiên (M_COM_004, M_COM_005), tài khoản bị khóa (M_PAU_002), role ngoài phạm vi (về trang chủ, M_COM_006); ROLE-004 không bắt MFA (aal2 không áp dụng); ROLE-004 thì skeleton 6 thẻ, gọi song song SYS_ME và DLV_LIST (status waiting và in_progress, q theo URL)",
+        "E-1 ô tìm (tối đa 30 ký tự, trim, sau 400 ms hoặc Enter, khớp tiền tố mã giao hàng, mã giao dịch hoặc mã lot), E-2 hai chip Đang chờ và Đang giao đều bật mặc định, phải còn ít nhất một chip bật (bấm chip cuối không đổi), E-3 thứ tự cố định created_at giảm, E-4 làm mới; đổi lọc bỏ cursor, cập nhật ?q=",
+        "Thẻ F-1..F-7: mã giao hàng, mã giao dịch, loại, lot, chip trạng thái, 'Còn x kg · đã giao a / b kg' (còn lại không dương khi chưa completed thì 'Đã giao vượt x kg', trường hợp Q40), lần đã ghi N/5, F-6 '5/5 chỉ còn ngoại lệ'; F-9 'Hiển thị a / b' với tổng bằng tổng counts của các chip bật; F-10 Tải thêm 20 thẻ; F-8 rỗng M_COM_021 kèm gợi ý",
+        "F-7 Ghi ngoại lệ mở /deliveries/{id}/exception?from=exceptions khi ngày hiện tại open hoặc reopened, disabled kèm tooltip M_COM_016 khi locked hoặc reopen_requested (D-1 biến thể khóa); vào từ S-035 sau khi ghi thành công thì toast M_DLV_007 (loại JP, mã giao dịch) 5 giây, giao hàng vừa ghi không còn trong danh sách; không kiểm giao hàng còn mở ở client khi bấm F-7",
+        "D-1 biến thể lỗi: M_COM_002 hoặc M_COM_003 kèm Thử lại (lần tải đầu hiện 'Chưa tải được danh sách' thay F-8, giữ thẻ đã tải nếu có); VALIDATION thì fields.q inline (M_COM_010) và fields.status thì reset chip rồi gọi lại; Lỗi dùng chung: SESSION_EXPIRED hoặc UNAUTHENTICATED (M_COM_005, M_COM_004, nội dung đang nhập mất vì không lưu nháp), FORBIDDEN (M_COM_006 rồi về trang chủ), mất mạng hoặc timeout (M_COM_003), 503 (M_COM_002), 500 hoặc mã lạ (M_COM_001 kèm requestId); màn bắt buộc online, không có hàng đợi offline (ADR-009); không tự làm mới định kỳ"
+      ],
+      "depends": [
+        "E07-BE-01",
+        "E10-SYS-01",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01"
+      ]
+    },
+    {
+      "key": "E07-FE-04",
+      "type": "fe",
+      "special": "khóa ngày hai lớp (F-018)",
+      "parent_of": [
+        "E07-FE-04a",
+        "E07-FE-04b"
+      ],
+      "title": "S-035 DLV_EXCEPTION_FORM: ghi nhận ngoại lệ giao hàng",
+      "goal": "Form ngoại lệ của ROLE-004, đường đóng vĩnh viễn; 5 trạng thái (normal, error, confirm, closed, day-locked), chia 2 sub-issue.",
+      "specs": [
+        "DLV_EXCEPTION_FORM_SPEC (5 trạng thái)",
+        "FR-DLV-003",
+        "FR-DLV-005 AC2"
+      ],
+      "dod": [
+        "Hoàn thành khi 2 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E07-FE-04a",
+      "type": "fe",
+      "special": "khóa ngày hai lớp (F-018)",
+      "title": "S-035a: form ngoại lệ, loại, số lượng, lý do và tệp chứng cứ",
+      "goal": "Nhập loại, số lượng, lý do và tải chứng cứ.",
+      "specs": [
+        "DLV_EXCEPTION_FORM_SPEC §4.1 (C..F), §4.2, §5 (F-1, F-4, F-5, F-8, F-9), §6 A1, A4..A7",
+        "Q39 (đã chốt), Q31 (mở), Q92 (xem E07-CLR-01)"
+      ],
+      "dod": [
+        "Mở màn: proxy xử lý hết phiên (M_COM_004, M_COM_005), tài khoản bị khóa (M_PAU_002), role ngoài phạm vi (về trang chủ, M_COM_006); ROLE-004 không bắt MFA (aal2 không áp dụng); mở /deliveries/{id}/exception gọi song song SYS_ME và DLV_GET; giao hàng waiting hoặc in_progress và ngày hiện tại open hoặc reopened thì form trống, enabled; completed hoặc exception thì D-1 M_DLV_003 và khóa form; ngày locked hoặc reopen_requested thì D-1 M_COM_016 và khóa form; id sai thì M_COM_007; E-1..E-7 thông tin giao hàng chỉ đọc (còn lại âm thì 'đã giao vượt x kg', 5/5 thì '5/5 hết lượt ghi')",
+        "F-1 radio đúng bốn loại theo thứ tự 引渡不足 Thiếu hụt, 引渡超過 Dư thừa, 返却 Trả hàng, 部分キャンセル Hủy một phần, không chọn sẵn (thiếu thì M_COM_009 inline F-2); F-3 số lượng ngoại lệ bắt buộc, đơn vị kg, gợi ý bằng E-6 khi lớn hơn 0 nhưng không điền sẵn, regex ^\\d{1,9}(\\.\\d{1,3})?$ (rỗng thì M_COM_009, không dương thì M_COM_011, quá 3 số lẻ hoặc quá lớn thì M_COM_012), không so với phần còn lại theo quyết định ở E07-CLR-01",
+        "F-5 lý do 1 đến 500 ký tự sau trim (M_COM_009, M_COM_010) kèm đếm F-7; F-4 nhóm lý do chỉ là trợ giúp nhập, chọn thì điền '{nhóm}: ' vào đầu F-5 (không có cột riêng, danh mục chờ khách OQ-3 nên chưa có dữ liệu); F-10 người xác nhận là tài khoản đang đăng nhập, thời điểm do server ghi; F-11 cảnh báo không thể hoàn tác",
+        "F-8 chứng cứ tùy chọn: tối đa 5 tệp, 10 MB, jpg, png, pdf; với từng tệp kiểm loại và cỡ ở client (M_COM_025, M_COM_026; tệp thứ 6 thì M_COM_027 và không tải), gọi SYS_EVIDENCE_UPLOAD_URL rồi PUT lên signed_url kèm tiến độ, thành công thì giữ path, lỗi PUT thì M_COM_028 kèm Thử lại; F-9 Xóa chỉ bỏ khỏi danh sách (tệp đã tải không bị xóa khỏi Storage, dọn theo chính sách chờ Q31); G-2 disabled khi còn tệp đang tải",
+        "Lỗi dùng chung: SESSION_EXPIRED hoặc UNAUTHENTICATED (M_COM_005, M_COM_004, nội dung đang nhập mất vì không lưu nháp), FORBIDDEN (M_COM_006 rồi về trang chủ), mất mạng hoặc timeout (M_COM_003), 503 (M_COM_002), 500 hoặc mã lạ (M_COM_001 kèm requestId); màn bắt buộc online, không có hàng đợi offline (ADR-009); không tự làm mới định kỳ",
+        "F-4 nhóm lý do: danh mục theo loại chưa có (OQ-3, khách chốt); chấp nhận hiển thị F-4 không có lựa chọn hoặc ẩn cho tới khi có danh mục, theo giả định được xác nhận ở PREMISE"
+      ],
+      "depends": [
+        "E07-BE-01",
+        "E10-SYS-02",
+        "E10-SYS-01",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01"
+      ],
+      "parent": "E07-FE-04"
+    },
+    {
+      "key": "E07-FE-04b",
+      "type": "fe",
+      "special": "khóa ngày hai lớp (F-018)",
+      "title": "S-035b: modal xác nhận, ghi ngoại lệ và các lỗi",
+      "goal": "G-2, modal H, gọi DLV_EXCEPTION_RECORD và điều hướng sau khi ghi.",
+      "specs": [
+        "DLV_EXCEPTION_FORM_SPEC §4.1 (G, H), §5 (G-2, H-4, H-5, G-1, Error Handling), §6 A8",
+        "FR-DLV-003 AC4"
+      ],
+      "dod": [
+        "G-2 Ghi nhận ngoại lệ: kiểm F-1, F-3, F-5 cùng lúc; lỗi thì D-1 M_COM_008 kèm inline F-2, F-3, F-6, focus ô lỗi đầu tiên, không mở modal; hợp lệ thì ẩn D-1 và mở modal H (M_DLV_005 kèm nhãn JP của loại, tóm tắt giao dịch, đã giao trên cần giao, loại, số lượng, lý do cắt 80 ký tự, số tệp)",
+        "H-5 Ghi nhận: khóa H-4, H-5 kèm spinner, gọi DLV_EXCEPTION_RECORD (exceptionType, qty dạng chuỗi, reason đã trim, evidencePaths của các tệp thành công); thành công thì chuyển /deliveries/exceptions bằng replace (Back không quay lại form) kèm mã giao dịch và loại để S-034 hiện toast M_DLV_007, kể cả khi vào form từ S-033; H-4, Esc, bấm nền đóng modal và giữ dữ liệu, bị khóa khi đang gửi",
+        "Lỗi: INVALID_STATE thì đóng modal, D-1 M_DLV_003, gọi lại DLV_GET, khóa form; DAY_LOCKED thì đóng modal, mở S-024 (M_ADJ_010, M_ADJ_013, không nút điều chỉnh), giữ nội dung, đóng thì gọi lại SYS_ME để D-1 M_COM_016 và khóa; VALIDATION thì đóng modal, D-1 M_COM_008, giữ dữ liệu, bật lại nút và message theo fields.exceptionType dưới F-1, fields.qty dưới F-3 (M_COM_009, M_COM_011, M_COM_012, và lỗi bổ sung nếu E07-CLR-01 chọn kiểm theo số liệu), fields.reason dưới F-5, fields.evidencePaths dưới F-8; NOT_FOUND thì M_COM_007; lỗi tải tệp ở bước chọn xử lý ở E07-FE-04a",
+        "Hủy (G-1, C-4): form trống thì về màn gọi theo from (record thì S-033, khác thì S-034), có nội dung (F-1, F-5 hoặc tệp) thì M_COM_020; 500 thì kết quả không chắc, gọi lại DLV_GET trước khi cho bấm lại; mất mạng thì đóng modal, giữ dữ liệu, bật lại nút; BAD_REQUEST hoặc UNSUPPORTED_MEDIA_TYPE thì M_COM_018",
+        "Chuyển menu (B-1), logo (A-1) hoặc đăng xuất (A-7) khi form có nội dung thì hỏi M_COM_020; đổi ngôn ngữ giữ nguyên dữ liệu form"
+      ],
+      "depends": [
+        "E07-FE-04a",
+        "E07-BE-04",
+        "E04-FE-03",
+        "E07-FE-03"
+      ],
+      "parent": "E07-FE-04"
+    },
+    {
+      "key": "E07-FE-05",
+      "type": "fe",
+      "special": "完納奨励金 (tỷ lệ có phiên bản)",
+      "parent_of": [
+        "E07-FE-05a",
+        "E07-FE-05b"
+      ],
+      "title": "S-036 DLV_SETTLEMENT_CROSSCHECK: tra cứu đối chiếu giao hàng và quyết toán",
+      "goal": "Màn chỉ đọc của ROLE-005; 3 trạng thái (normal, by-delivery, empty), chia 2 sub-issue.",
+      "specs": [
+        "DLV_SETTLEMENT_CROSSCHECK_SPEC (3 trạng thái)",
+        "FR-DLV-004"
+      ],
+      "dod": [
+        "Hoàn thành khi 2 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E07-FE-05a",
+      "type": "fe",
+      "special": "完納奨励金 (tỷ lệ có phiên bản)",
+      "title": "S-036a: tra cứu, hai tab, gợi ý mã và trạng thái rỗng",
+      "goal": "Khối D và G: nhập mã, tab, gợi ý, gọi DLV_CROSS_REF.",
+      "specs": [
+        "DLV_SETTLEMENT_CROSSCHECK_SPEC §4.1 (D, G), §4.2, §5, §6 A2, A3",
+        "FR-DLV-004 AC2, AC3, AC5"
+      ],
+      "dod": [
+        "Mở màn: proxy xử lý hết phiên (M_COM_004, M_COM_005), tài khoản bị khóa (M_PAU_002), role ngoài phạm vi (về trang chủ, M_COM_006); ROLE-004 không bắt MFA (aal2 không áp dụng) (chỉ ROLE-005, phiên aal1 thì bước TOTP và M_COM_019); aal2 thì gọi SYS_ME, tab 1 được chọn, D-2 trống và focus, ẩn E, F, G, không gọi DLV_CROSS_REF khi chưa nhập",
+        "Hai tab: Theo giao dịch hoặc quyết toán (mặc định, nhập mã giao dịch TX-… hoặc mã lot LOT-…) và Theo giao hàng (mã DLV-…); đổi tab xóa D-2, D-5 và kết quả, đổi nhãn; D-2 trim và viết hoa, tối đa 30 ký tự; rỗng khi bấm D-3 thì M_COM_009 (Mã tra cứu hoặc Mã giao hàng), không gọi API; không báo lỗi định dạng mã (sai thì server trả rỗng)",
+        "D-5 gợi ý chỉ tab 1 khi D-2 bắt đầu LOT hoặc TX và từ 3 ký tự, sau 300 ms: LOT thì LOT_SEARCH (tối đa 10 lot), TX thì TRD_LIST (tối đa 10 mã giao dịch kèm tên bên mua); hủy request cũ; chọn bằng chuột hoặc phím mũi tên và Enter; lỗi gợi ý ẩn D-5 im lặng, không chặn tra cứu",
+        "D-3 hoặc Enter: khóa kèm spinner, ẩn kết quả cũ; tab 1 mã giao dịch thì tradeCode, lot đã chọn thì lotId (gõ tay không chọn thì LOT_SEARCH lấy dòng khớp đúng lot_code, không có thì G-1), tab 2 thì deliveryCode; items rỗng thì G-1 (M_COM_021 kèm mã đã nhập, không phải lỗi); lot có hơn 20 giao dịch: chờ quyết định thêm nút Tải thêm (OQ-6)",
+        "VALIDATION thì inline theo fields hoặc banner M_COM_008; MFA_REQUIRED thì bước TOTP (mất kết quả); Lỗi dùng chung: SESSION_EXPIRED hoặc UNAUTHENTICATED (M_COM_005, M_COM_004, nội dung đang nhập mất vì không lưu nháp), FORBIDDEN (M_COM_006 rồi về trang chủ), mất mạng hoặc timeout (M_COM_003), 503 (M_COM_002), 500 hoặc mã lạ (M_COM_001 kèm requestId); màn bắt buộc online, không có hàng đợi offline (ADR-009); không tự làm mới định kỳ"
+      ],
+      "depends": [
+        "E07-BE-05",
+        "E02-BE-03",
+        "E03-BE-08",
+        "E10-SYS-01",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01"
+      ],
+      "parent": "E07-FE-05"
+    },
+    {
+      "key": "E07-FE-05b",
+      "type": "fe",
+      "special": "完納奨励金 (tỷ lệ có phiên bản)",
+      "title": "S-036b: kết quả giao dịch, quyết toán, giao hàng và các lần giao",
+      "goal": "Khối E và F: mỗi giao dịch một cặp thẻ.",
+      "specs": [
+        "DLV_SETTLEMENT_CROSSCHECK_SPEC §4.1 (E, F), §6 A1, A4..A8",
+        "FR-DLV-004 AC1"
+      ],
+      "dod": [
+        "Mỗi item hiện một cặp E và F: E-1 mã giao dịch và loại, E-2 lot, mặt hàng, bên mua, E-3 ngày nghiệp vụ kèm chip 締め (Chưa 締め, Đã 締め #lock_no kèm giờ, Chờ 締め再開, Đã mở lại chờ chốt lại), E-4 và E-5 số lượng và đơn giá gốc đến hiệu lực ('không đổi' khi bằng nhau), E-6 thành tiền hiệu lực (kèm giá trị gốc khi khác, làm tròn hiển thị floor về yên nguyên), E-7 số lần điều chỉnh kèm giờ lần cuối (không có loại bút toán, OQ-3)",
+        "E-8 các dòng 完納奨励金 (original hoặc delta, đúng hạn hoặc không, số tiền có dấu); không có dòng: ngày chưa locked thì 'Chưa tính — ngày chưa 締め', ngày đã khóa thì 'Chưa có kết quả'; hiển thị mọi dòng original và delta mà API trả cho giao dịch (S-036 không có bộ chọn lần khóa); kết quả phụ thuộc E-06",
+        "F-1 mã giao hàng, chip trạng thái và giờ hoàn tất hoặc ⚠ Ngoại lệ; F-2 kiểm đã giao so với cần giao ('✔ khớp' hoặc '✖ chênh x kg' kèm '(đã đóng bằng ngoại lệ)' hoặc '(đang giao)'); bảng lần giao F-3..F-7 (lần n/5, số lượng, ngày nghiệp vụ DD/MM với tooltip DD/MM/YYYY, người ghi, giờ); F-8 ngoại lệ inline (loại JP và mã, lý do, người ghi, giờ, số tệp, không mở tệp); giao dịch chưa có giao hàng thì inline M_COM_021 thay F",
+        "Không deep-link sang màn khác; ngày locked, reopen_requested, reopened chỉ hiển thị ở E-3, không chặn tra cứu; Lỗi dùng chung: SESSION_EXPIRED hoặc UNAUTHENTICATED (M_COM_005, M_COM_004, nội dung đang nhập mất vì không lưu nháp), FORBIDDEN (M_COM_006 rồi về trang chủ), mất mạng hoặc timeout (M_COM_003), 503 (M_COM_002), 500 hoặc mã lạ (M_COM_001 kèm requestId); màn bắt buộc online, không có hàng đợi offline (ADR-009); không tự làm mới định kỳ"
+      ],
+      "depends": [
+        "E07-FE-05a"
+      ],
+      "parent": "E07-FE-05"
+    },
+    {
+      "key": "E07-QA-01",
+      "type": "qa",
+      "special": "完納奨励金 (tỷ lệ có phiên bản)",
+      "title": "QA đầu cuối: tạo giao hàng khi chốt, ghi lần giao và hoàn tất",
+      "goal": "Kiểm thử luồng ghi lần giao từ trình duyệt thật và PostgreSQL.",
+      "specs": [
+        "FR-DLV-001",
+        "FR-DLV-002",
+        "FR-DLV-005",
+        "DLV_DELIVERY_RECORD_TECH test case gợi ý"
+      ],
+      "dod": [
+        "Chốt giao dịch thì một dòng deliveries waiting kèm mã DLV-NNNNNN; tự từ chối thì không tạo; qty_effective 10,000: 3,333 cộng 3,333 cộng 3,334 thì completed với completed_at (khớp chính xác, không sai số); 3,333 ba lần thì in_progress, lần 4 bằng 0,002 thì DELIVERY_QTY_EXCEEDED với params [10,001, 10,000]",
+        "5 lần chưa đủ thì lần 6 DELIVERY_PART_LIMIT (S-033 mở dialog I); giao hàng completed thì INVALID_STATE; giao hàng có điều chỉnh làm qty_effective giảm: kiểm vượt dùng qty_effective chứ không dùng trades.qty; điều chỉnh xuống không lớn hơn số đã giao khi chưa completed (chưa đủ 5 lần): mọi lần ghi DELIVERY_QTY_EXCEEDED, S-033 hiện M_DLV_009 (hiện G-6) và ngoại lệ vẫn ghi được; giao hàng đã completed theo số cũ rồi mới bị điều chỉnh: giữ completed và completed_at, S-033 hiện chênh lệch kèm banner M_DLV_008 và ẩn G-6, gọi trực tiếp API ghi ngoại lệ hoặc ghi lần giao thì INVALID_STATE",
+        "Ngày: ngày hiện tại locked thì DAY_LOCKED kèm một audit chặn, S-024 không có nút điều chỉnh, G-7 khóa theo SYS_ME; reopened thì ghi được; ghi vào ngày hiện tại chứ không phải ngày của giao dịch; qty là số JSON, '0', '1,2345' thì 422 đúng mã; ROLE-005 POST thì 403",
+        "completed_at là mốc 完納奨励金 dùng (kiểm cùng E06-QA-01); mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả",
+        "Sau lần ghi hoàn tất, S-033 gọi lại DLV_GET: lịch sử H có lần giao cuối, tổng đã giao, part_count và completed_at thống nhất với dữ liệu, không chỉ banner và status",
+        "Audit ghi lần giao: đúng một dòng delivery.record_part cho mỗi lần ghi thành công (kèm part_no, qty, delivered_qty, status, completed_at); lần ghi bị rollback không để lại audit"
+      ],
+      "depends": [
+        "E07-FE-02b",
+        "E03-BE-04c",
+        "E04-BE-03"
+      ]
+    },
+    {
+      "key": "E07-QA-02",
+      "type": "qa",
+      "special": "khóa ngày hai lớp (F-018)",
+      "title": "QA đầu cuối: ghi ngoại lệ, đóng vĩnh viễn và chứng cứ",
+      "goal": "Kiểm thử luồng ngoại lệ từ trình duyệt thật.",
+      "specs": [
+        "FR-DLV-003",
+        "DLV_EXCEPTION_FORM_SPEC",
+        "Q39 (đã chốt), Q92 (xem E07-CLR-01)"
+      ],
+      "dod": [
+        "Mỗi trong bốn loại ghi được kèm số lượng, lý do; thiếu loại, số lượng hoặc lý do, lý do 501 ký tự, qty không hợp lệ thì bị từ chối (client và server); evidencePaths quá 5 phần tử, đường dẫn giả hoặc của người khác bị từ chối; tệp sai loại, quá 10 MB, thứ 6, lỗi PUT hiển thị đúng; không chứng cứ vẫn ghi được",
+        "Sau khi ghi: giao hàng exception, không sửa, không hủy, không ghi lần giao hay ngoại lệ thứ hai (INVALID_STATE); số lượng ngoại lệ không cộng vào số đã giao; giao hàng completed hoặc exception không có trong S-034; ngoại lệ ghi ở ngày hiện tại locked thì DAY_LOCKED",
+        "Toast M_DLV_007 ở S-034 sau khi ghi, kể cả khi vào form từ S-033; 完納奨励金 coi giao hàng exception là không đúng hạn (kiểm cùng E06-QA-01); mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả",
+        "Lỗi qty do server (bỏ qua client): rỗng, không dương, quá 3 số lẻ, quá lớn đều VALIDATION kèm fields.qty và hiển thị dưới F-3, giữ dữ liệu form",
+        "Giao hàng đã đóng và ngày hiện tại đã khóa cùng lúc thì INVALID_STATE (guard trạng thái đứng trước), không sinh audit guard.write_blocked; chỉ khi giao hàng còn mở mà ngày khóa mới DAY_LOCKED kèm một audit chặn; audit ghi ngoại lệ thành công là đúng một dòng delivery.record_exception (kèm exception_type, qty, lý do), ngoại lệ bị rollback không để lại audit (audit ghi lần giao kiểm ở E07-QA-01)"
+      ],
+      "depends": [
+        "E07-FE-04b",
+        "E07-FE-03"
+      ]
+    },
+    {
+      "key": "E07-QA-03",
+      "type": "qa",
+      "special": "khóa ngày hai lớp (F-018)",
+      "title": "QA đồng thời: ghi lần giao đua với ghi khác, chốt sổ và duyệt điều chỉnh",
+      "goal": "Kiểm thử hai phiên trên PostgreSQL cho khóa deliveries.",
+      "specs": [
+        "DLV_DELIVERY_RECORD_TECH §5 (đồng thời)",
+        "ADJ_ADJUSTMENT_DECIDE_TECH §4.3 (khóa deliveries)",
+        "CLS_DAY_CLOSE_TECH §5"
+      ],
+      "dod": [
+        "Ma trận ghi đồng thời (khóa chỉ tuần tự hóa, không mặc định từ chối bên sau): đã có 4 lần và hai người cùng ghi lần 5 — người đầu ghi chưa đủ thì bên sau DELIVERY_PART_LIMIT (guard số lần đứng trước guard số lượng); người đầu ghi hoàn tất thì bên sau INVALID_STATE; đã có không quá 3 lần và cả hai lần ghi còn hợp lệ thì cả hai thành công; ghi lần giao đua với ghi ngoại lệ: ngoại lệ sau lần giao chưa đủ vẫn thành công (giao hàng thành exception), ngoại lệ sau lần giao hoàn tất thì INVALID_STATE",
+        "Ghi đua với rpc_day_close của ngày hiện tại theo thứ tự: ghi vào trước thì chốt chờ rồi chốt; chốt vào trước thì ghi nhận DAY_LOCKED; không 5xx, không deadlock; ghi đua với duyệt 差額記録 cùng giao dịch (rpc_adjustment_decide khóa deliveries FOR UPDATE sau trades): duyệt commit trước thì lần ghi sau đọc qty_effective mới và áp các guard theo thứ tự (có thể hoàn tất hoặc báo vượt); lần ghi hoàn tất theo số cũ commit trước rồi duyệt giảm thì giữ completed và completed_at theo Q40, hiển thị chênh lệch, không sửa lại",
+        "Gửi lại sau timeout tạo lần giao mới (hành vi hiện tại) hoặc replay theo quyết định ở E07-CLR-02; mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả"
+      ],
+      "depends": [
+        "E07-BE-03",
+        "E07-BE-04",
+        "E04-BE-03",
+        "E05-BE-03"
+      ]
+    },
+    {
+      "key": "E07-QA-04",
+      "type": "qa",
+      "special": "完納奨励金 (tỷ lệ có phiên bản)",
+      "title": "QA: danh sách, tra cứu chéo, phân quyền và hiệu năng",
+      "goal": "Kiểm thử S-032, S-034, S-036 và quyền ROLE-004, ROLE-005.",
+      "specs": [
+        "FR-DLV-001 AC5",
+        "FR-DLV-004 AC1..AC5",
+        "DLV_DELIVERY_LIST_SPEC",
+        "DLV_SETTLEMENT_CROSSCHECK_SPEC"
+      ],
+      "dod": [
+        "Danh sách: bốn tab với counts theo q, tìm theo tiền tố mã giao hàng, mã giao dịch, mã lot (không phân biệt hoa thường), keyset 20 thẻ không trùng không sót, mọi ngày nghiệp vụ; ROLE-005 xem danh sách chỉ đọc (không có nút ghi), ROLE-005 gọi DLV_GET hoặc POST thì 403, ROLE-004 gọi DLV_CROSS_REF thì 403, ROLE-005 aal1 thì MFA_REQUIRED",
+        "Tra cứu chéo: theo tradeId, tradeCode, deliveryCode, lotId đều ra đúng; thiếu hoặc nhiều khóa thì VALIDATION; mã hoặc giao dịch không tồn tại thì 200 rỗng; giao dịch pending (chưa có giao hàng) tra theo mã và theo lot thì trả item với delivery null và S-036 hiện M_COM_021 ở khối giao hàng; lot có hơn 20 giao dịch phân trang đúng thứ tự; ngày đã khóa lâu vẫn tra được; thấy giá trị hiệu lực sau điều chỉnh, 完納奨励金 original và delta, giao hàng đóng bằng ngoại lệ",
+        "Hiệu năng: p95 thời gian phản hồi DLV_CROSS_REF không quá 2 giây (FR-DLV-004 AC4, NFR-PERF-01), đo bằng số mẫu đủ lớn (ví dụ 200 yêu cầu mỗi khóa tra cứu) trên dữ liệu đại diện cỡ 1.200 giao dịch mỗi ngày nhiều ngày, ghi workload và cách tính phân vị; kế hoạch truy vấn chỉ dùng để giải thích đường tra, không thay phép đo; mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả",
+        "Phân trang: fixture nhiều giao hàng cùng created_at, tải qua ranh giới 20 dòng không lặp và không thiếu"
+      ],
+      "depends": [
+        "E07-FE-05b",
+        "E07-FE-01",
+        "E06-BE-01c"
+      ]
+    },
+    {
+      "key": "E07-CLR-01",
+      "type": "clarify",
+      "title": "Làm rõ: số lượng ngoại lệ có bị ràng buộc với phần còn lại không (Q92)",
+      "goal": "Q39 đã chốt (có ghi số lượng ngoại lệ) nhưng Q92 còn mở: số lượng có bị chặn vượt phần còn lại hoặc buộc khớp theo loại; thiết kế hiện chỉ kiểm lớn hơn 0.",
+      "specs": [
+        "REQ-001 §8 Q39 (resolved), Q92 (open)",
+        "DLV_DELIVERY_RECORD_TECH §4.6 bước 4, Câu hỏi mở Q92",
+        "DLV_EXCEPTION_FORM_SPEC §4.2 ('Cố ý KHÔNG validate'), A5"
+      ],
+      "dod": [
+        "Có quyết định chấp nhận: giữ chỉ kiểm lớn hơn 0 và tối đa ba số lẻ, hay chặn vượt phần còn lại (qty_effective trừ đã giao), hay buộc khớp theo loại (ví dụ 引渡不足 bằng phần còn lại); ghi vào PREMISE",
+        "Nếu có ràng buộc: định nghĩa cho cả ca Q40 (phần còn lại không dương), loại dư thừa và trả hàng; báo lại E07-DB-03, E07-BE-04, E07-FE-04a, E07-QA-02; không tự thêm ràng buộc khi chưa có quyết định"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E07-CLR-02",
+      "type": "clarify",
+      "title": "Làm rõ: idempotency cho ghi lần giao (gửi lại sau timeout)",
+      "goal": "api-list QA-8 và Q-DLV-T3 đề xuất header Idempotency-Key tùy chọn cho DLV_PART_RECORD nhưng chưa chốt và chưa có cột hay chỉ mục duy nhất; hiện gửi lại thành một lần giao mới.",
+      "specs": [
+        "api-list §1 (idempotency) và DLV_PART_RECORD, QA-8",
+        "DLV_DELIVERY_RECORD_TECH §5 (Gửi lại sau timeout), Q-DLV-T3",
+        "DLV_DB §4.2"
+      ],
+      "dod": [
+        "Có quyết định chấp nhận: thêm idempotency (header, cột và chỉ mục duy nhất ở delivery_parts, hành vi replay 200 kèm replayed true, cùng key khác payload thì CONFLICT, như TRD_CREATE) hay giữ hiện tại (FE khóa nút khi gửi, người dùng làm mới trước khi ghi lại); ghi vào PREMISE",
+        "Nếu thêm: báo lại E07-DB-02, E07-BE-03, E07-DOC-01b, E07-FE-02b, E07-QA-03; không tự thêm cột khi chưa có quyết định"
+      ],
+      "depends": []
+    }
+  ]
+}

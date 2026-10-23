@@ -1,0 +1,699 @@
+{
+  "epic": {
+    "key": "E-04",
+    "title": "E-04 Điều chỉnh giao dịch (trade-adjustment)",
+    "goal": "Yêu cầu và duyệt điều chỉnh giao dịch đã chốt bằng 差額記録 hoặc 逆仕訳 (không ghi đè giao dịch gốc), chặn ghi trực tiếp vào ngày đã khóa hai lớp, và component S-024.",
+    "specs": [
+      "FR-ADJ-001..003",
+      "design/trade-adjustment",
+      "ADJ_DB",
+      "ADR-006",
+      "ADR-005"
+    ],
+    "out_of_scope": [
+      "Thay đổi bên mua, lot hoặc ngày của giao dịch (FR-ADJ-001 AC2, Q6)",
+      "Công thức và làm tròn delta 完納奨励金, hiển thị S-031 (E-06; epic này chỉ gọi)",
+      "締め再開 (E-05)",
+      "Hủy giao dịch chưa chốt (E-03)",
+      "Báo cáo dùng bút toán (E-09)"
+    ]
+  },
+  "issues": [
+    {
+      "key": "E04-DOC-01",
+      "type": "doc",
+      "parent_of": [
+        "E04-DOC-01a",
+        "E04-DOC-01b"
+      ],
+      "title": "Soạn API Design (BM-2-901-52) cho nhóm API trade-adjustment",
+      "goal": "Soạn API Design cho 4 API điều chỉnh và hợp đồng chặn ghi ngày khóa, chia 2 sub-issue.",
+      "specs": [
+        "api-list §2.5 ADJ",
+        "api-design/_index (L5)",
+        "BM-2-901-52",
+        "PREMISE (mục Thêm: API Design)"
+      ],
+      "dod": [
+        "Hoàn thành khi 2 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E04-DOC-01a",
+      "type": "doc",
+      "title": "API Design: tạo, danh sách và chi tiết yêu cầu điều chỉnh (3 API)",
+      "goal": "ADJ_REQUEST_CREATE, ADJ_REQUEST_LIST, ADJ_REQUEST_GET.",
+      "specs": [
+        "api-list ADJ_REQUEST_CREATE, ADJ_REQUEST_LIST, ADJ_REQUEST_GET",
+        "ADJ_ADJUSTMENT_DECIDE_TECH §4.1, §4.2, §4.7",
+        "ADJ_ADJUSTMENT_REQUEST_SPEC",
+        "Q34, Q47 (đã chốt)"
+      ],
+      "dod": [
+        "Mỗi API một file {API_ID}_API.md theo mẫu BM-2-901-52: request, response, quyền, mã lỗi, link SPEC và TECH liên quan",
+        "Chốt response của ADJ_REQUEST_CREATE: TECH §4.2 và api-list có request_code, TECH §4.7 #1 chỉ ghi {ok, id, status} (xem chỗ hở); chốt tên khóa vì TECH ghi chốt ở LAB-5 (DQ-4)",
+        "Chốt mã lỗi và message khi giao dịch đã đảo toàn bộ (Q34 đã chốt chặn điều chỉnh tiếp) vì SPEC S-022 ghi cần thêm message nếu chốt chặn",
+        "Chốt kiểm tiền tố đường dẫn chứng cứ thuộc người gọi (TECH §4.1 #2 còn [ĐIỀN] theo bucket, Q31)",
+        "ADJ_REQUEST_GET: dạng impact.participation (posting_date, used_jpy, limit_jpy, exceeds) và signed URL chứng cứ; khớp api-list, chỗ lệch ghi vào bảng chỗ hở",
+        "Chốt miền số của yêu cầu: qty mới < 1.000.000.000 và đơn giá tối đa 2.147.483.647 (SPEC) có thể cho amount_delta lên tới khoảng 2,1 nhân 10^18, vượt phần nguyên tối đa của NUMERIC(18,3) (khoảng 10^15) nên CHECK hoặc INSERT báo lỗi 500 (thành tiền hiệu lực là numeric không giới hạn, chỉ amount_delta bị giới hạn); chốt nơi và cách kiểm (ở route, RPC tạo yêu cầu, RPC duyệt) với người sở hữu thiết kế, không tự đặt trần nghiệp vụ mới (xem chỗ hở 17)",
+        "Chốt thứ tự và nhóm trạng thái của ADJ_REQUEST_LIST theo màn: S-022 cần requested_at giảm dần (mới nhất trước), S-023 cần tăng dần (cũ nhất trước, giới hạn 100); originDayStatus=locked gồm locked và reopen_requested, open gồm open và reopened; chốt cách đáp ứng cả hai bằng hợp đồng hiện có, nếu cần thêm tham số thì ghi quyết định LAB-5 (chỗ hở 18)",
+        "Sửa ví dụ SQL mặc định của request_code: lpad cố định 6 ký tự cắt số dài hơn (1000000 thành 100000, có thể trùng mã đã cấp), cần cách chỉ thêm số 0 khi thiếu chữ số (chỗ hở 19)"
+      ],
+      "depends": [],
+      "parent": "E04-DOC-01"
+    },
+    {
+      "key": "E04-DOC-01b",
+      "type": "doc",
+      "title": "API Design: duyệt điều chỉnh và hợp đồng chặn ghi ngày khóa (1 API, 2 hợp đồng)",
+      "goal": "ADJ_DECIDE, hợp đồng lớp 1 và lớp 2 của DAY_LOCKED, hợp đồng component S-024.",
+      "specs": [
+        "api-list ADJ_DECIDE",
+        "ADJ_ADJUSTMENT_DECIDE_TECH §4.3..§4.7",
+        "ADJ_LOCKED_DAY_GUARD_TECH §4.1, §4.2, §4.4, §4.5",
+        "ADR-006"
+      ],
+      "dod": [
+        "File ADJ_DECIDE_API.md theo mẫu BM-2-901-52: request (decision, rejectReason), response duyệt (ok, entry_id, entry_type, business_day_id, is_post_lock) và từ chối (ok, status), quyền (ROLE-005 aal2), mã lỗi",
+        "Hợp đồng DAY_LOCKED dùng chung cho mọi RPC và trigger ghi trades: lớp 1 trả object {ok:false, code, params [business_date, status]} và ghi audit guard.write_blocked; lớp 2 raise P0001 với hint là mã lỗi và detail là JSON params; ánh xạ HTTP 409 do hạ tầng chung (E10-API-ERROR-MAPPING)",
+        "Hợp đồng component S-024: đầu vào là lỗi 409 DAY_LOCKED cùng tradeId, tradeCode, tradeStatus, role; khi nào hiện nút yêu cầu điều chỉnh (chỉ ROLE-003 và giao dịch confirmed)",
+        "Chốt kiểu khóa hàng trades của rpc_adjustment_decide là FOR NO KEY UPDATE và đồng bộ với E-03 (TRD_CONFIRM_TECH ghi FOR UPDATE; xem chỗ hở của E-03)",
+        "Khớp api-list và TECH; chỗ lệch ghi vào bảng chỗ hở",
+        "Chốt hợp đồng helper số dư lot cho caller điều chỉnh: lot_release_qty nhận số lượng dương do RPC tính (−qty_delta, hoặc qty_before khi reversal) cho giao dịch confirmed, khác luồng reject, cancel, tự từ chối chỉ hoàn trades.qty của giao dịch pending (LOT_DB §6); lot_reserve_qty không kiểm lot public ở luồng điều chỉnh (DECIDE §4.5 #2); đồng bộ E02-DOC-01b và E02-BE-08 (chỗ hở 20)",
+        "Chốt response duyệt và audit duy nhất với phần thưởng: INC_POST_LOCK_DELTA_TECH §4.5 trả thêm incentive {status, incentive_jpy?, rule_version_id?} và audit có incentive_delta {status, incentive_jpy, rule_version_id}, còn ADJ_ADJUSTMENT_DECIDE_TECH §4.5, §4.7 ghi incentive_delta_jpy và response không có phần thưởng; cả hai cập nhật 14/10/2026 nên chưa chọn theo ngày (chỗ hở 21)",
+        "Chốt audit và tên entity khi NO_OPEN_BUSINESS_DAY: DECIDE §4.4 chỉ trả object, INC_POST_LOCK_DELTA_TECH ghi write_audit guard.write_blocked rồi trả object; entity là adjustment_request (DELTA) hay trade_adjustment_request (DECIDE §4.5 #6) (chỗ hở 22)",
+        "Chốt riêng hai nhánh hỏng của lỗi trigger: (1) hint ngoài danh mục error-codes §2: error-codes §1 và GUARD §4.4 cùng trả 500 INTERNAL_ERROR; (2) hint hợp lệ nhưng detail không parse được: GUARD §4.4 trả 500 INTERNAL_ERROR, còn error-codes (dòng Trigger DB) và ADJ_LOCKED_DAY_BLOCK_SPEC E-1, E-2 giữ code với params rỗng và màn chủ truyền ngày; ghi cả hai nguồn, đối chiếu E10-API-ERROR-MAPPING, không gom mọi P0001 thành 409; thêm ca mapping cho cả hai nhánh (chỗ hở 23)"
+      ],
+      "depends": [],
+      "parent": "E04-DOC-01"
+    },
+    {
+      "key": "E04-DB-01",
+      "type": "db",
+      "special": "sửa sau chốt (差額記録/逆仕訳)",
+      "title": "Migration trade_adjustment_requests: bảng yêu cầu điều chỉnh và mã ADJ",
+      "goal": "Tạo bảng yêu cầu điều chỉnh cho cả 相対取引 và せり, có mã nghiệp vụ ADJ-NNNNNN.",
+      "specs": [
+        "ADJ_DB §2, §4.1",
+        "FR-ADJ-001 AC4, AC6",
+        "ADR-006 R1, R2",
+        "Q47 (đã chốt)"
+      ],
+      "dod": [
+        "Cột theo ADJ_DB §4.1; kind chỉ nhận correction hoặc reversal; new_qty > 0 (NUMERIC 12,3), new_unit_price > 0 (INTEGER); CHECK hình dạng: correction thì ít nhất một trong hai giá trị mới khác rỗng, reversal thì cả hai rỗng",
+        "reason tối đa 500 ký tự; evidence_paths có ít nhất một phần tử; status chỉ nhận pending, approved, rejected, mặc định pending; reject_reason bắt buộc khi rejected và tối đa 500 ký tự; CHECK người quyết định khác người yêu cầu",
+        "Sequence adjustment_code_seq; request_code mặc định ADJ- cộng sáu chữ số (thêm chữ số khi vượt 999999), duy nhất, CHECK theo mẫu; mã có thể hở số khi rollback",
+        "Chỉ mục duy nhất một phần theo trade_id khi status là pending (một yêu cầu chờ mỗi giao dịch); ba khóa ngoại (trade_id, requested_by, decided_by)",
+        "RLS bật, chỉ SELECT: ROLE-003, ROLE-005; không có trigger khóa ngày (luồng miễn trừ khóa ngày); không ghi trực tiếp bằng client",
+        "Mã ADJ không bị cắt khi vượt 999999: giá trị mặc định chỉ thêm số 0 khi thiếu chữ số (không dùng lpad cố định 6 ký tự cắt số dài); kiểm biên 999999 sang 1000000 vẫn duy nhất và khớp CHECK"
+      ],
+      "depends": [
+        "E03-DB-01",
+        "E01-DB-01",
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05"
+      ]
+    },
+    {
+      "key": "E04-DB-02",
+      "type": "db",
+      "special": "sửa sau chốt (差額記録/逆仕訳)",
+      "title": "Migration trade_adjustment_entries: bảng bút toán điều chỉnh, chỉ thêm",
+      "goal": "Bảng bút toán sinh khi duyệt; giao dịch gốc không bao giờ bị sửa.",
+      "specs": [
+        "ADJ_DB §2, §4.2, RLS, Trigger",
+        "ADR-006 R3, R5, R8",
+        "FR-ADJ-002 AC1"
+      ],
+      "dod": [
+        "Cột theo ADJ_DB §4.2; entry_type chỉ nhận delta hoặc reversal; CHECK qty_after >= 0 và bằng 0 khi reversal; đơn giá trước và sau > 0; qty_delta bằng qty_after trừ qty_before; unit_price_delta bằng hiệu hai đơn giá; amount_delta bằng qty_after nhân unit_price_after trừ qty_before nhân unit_price_before (NUMERIC 18,3, không làm tròn ở DB)",
+        "Duy nhất request_id (một yêu cầu tối đa một bút toán); is_post_lock là cột sinh (business_day_id khác origin_business_day_id); created_at mặc định clock_timestamp() (không dùng now())",
+        "Chỉ mục (trade_id, id) và (business_day_id); năm khóa ngoại; trigger deny_update_delete chặn UPDATE và DELETE mọi role; thu quyền update, delete, truncate khỏi service_role",
+        "Trigger guard_locked_business_day khi INSERT: ngày ghi sổ phải open hoặc reopened (lớp cuối của luật ngày ghi sổ)",
+        "RLS bật, chỉ SELECT: ROLE-003, 004, 005 (ROLE-004 cần để view giá trị hiệu lực đúng ở màn giao hàng)",
+        "Kiểm biên miền số: qty × đơn giá và amount_delta ở biên trên của yêu cầu không được thành 500 bất ngờ; cách xử lý theo quyết định ở E04-DOC-01a"
+      ],
+      "depends": [
+        "E04-DB-01",
+        "E03-DB-01",
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05"
+      ]
+    },
+    {
+      "key": "E04-DB-03",
+      "type": "db",
+      "special": "sửa sau chốt (差額記録/逆仕訳)",
+      "title": "View trade_effective_values: giá trị hiệu lực của giao dịch",
+      "goal": "Một dòng mỗi giao dịch, giá trị sau mọi điều chỉnh; nguồn cho đối soát, giao hàng, thưởng, báo cáo.",
+      "specs": [
+        "ADJ_DB §4.3",
+        "ADR-006 §5",
+        "FR-ADJ-002"
+      ],
+      "dod": [
+        "Cột: trade_id, qty_effective, unit_price_effective, amount_effective (tích hai cột trên), adjustment_count, last_adjusted_at (rỗng khi chưa điều chỉnh); qty_effective và unit_price_effective lấy từ bút toán có id lớn nhất của giao dịch, không có thì lấy từ trades",
+        "Bút toán mới nhất là id lớn nhất, không phải created_at lớn nhất",
+        "security_invoker bật; role đọc được trades phải đọc được cả trade_adjustment_entries (chính sách ở E04-DB-02) để không thấy qty_effective sai",
+        "Kiểm thử: giao dịch chưa điều chỉnh, một lần điều chỉnh, hai lần điều chỉnh liên tiếp, reversal (qty_effective bằng 0); ROLE-003, 004, 005 cùng thấy đúng giá trị"
+      ],
+      "depends": [
+        "E04-DB-02"
+      ]
+    },
+    {
+      "key": "E04-DB-04",
+      "type": "db",
+      "special": "khóa ngày hai lớp (F-018)",
+      "title": "Trigger trades_guard_locked_day: lớp 2 chặn ghi giao dịch vào ngày khóa",
+      "goal": "Lưới an toàn khi RPC quên lớp 1 hoặc khi ghi ngoài RPC (service_role, SQL tay), áp mọi tài khoản.",
+      "specs": [
+        "ADJ_LOCKED_DAY_GUARD_TECH §4.2, §4.3",
+        "TRD_DB (trigger trades_guard_locked_day)",
+        "FR-ADJ-003 AC1, AC2, AC4",
+        "ADR-006 R8"
+      ],
+      "dod": [
+        "BEFORE INSERT, UPDATE, DELETE cho mỗi dòng của trades; hàm security definer với search_path rỗng; đọc trạng thái ngày bằng FOR SHARE (ngày của OLD khi UPDATE hoặc DELETE, ngày của NEW khi INSERT hoặc UPDATE)",
+        "Ngày locked hoặc reopen_requested thì raise P0001 với hint DAY_LOCKED và detail JSON params [business_date, status]; áp cả ROLE-007 và service_role",
+        "Giao dịch đã confirmed mà đổi một trong qty, unit_price, buyer_id, lot_id, business_day_id, trade_type: ngày reopened thì hint DAY_LOCKED (status reopened, FE chọn M_ADJ_011); ngày open thì hint INVALID_STATE (giao dịch đã chốt bất biến ở mọi ngày)",
+        "Chuyển trạng thái pending sang confirmed, rejected, cancelled trên ngày open hoặc reopened vẫn được phép khi không đổi trường số liệu",
+        "Trigger không ghi audit được (raise làm rollback): log WARN msg guard.trigger_blocked do route ứng dụng ghi (route gọi RPC qua PostgREST); SQL trực tiếp hoặc gọi PostgREST trực tiếp chỉ kiểm exception, hint và detail thô, không đòi log hay audit ở lớp 2",
+        "RPC miễn trừ (yêu cầu, duyệt điều chỉnh, sửa thuộc tính lot) không ghi trades nên không chạm trigger; quy tắc review: RPC miễn trừ nào thêm UPDATE trades thì bị chặn đúng ý đồ",
+        "INSERT giao dịch mới vào ngày reopened chỉ được khi business_date là hôm nay (giờ Tokyo, trường hợp hôm nay bị 締め nhầm rồi mở lại, Q85); ngày reopened của hôm qua trở về trước thì raise DAY_LOCKED với params [business_date, status]; nguồn TRD_DB (trigger trades_guard_locked_day) và REQ-001 FR-TRD-007 AC7; ADJ_LOCKED_DAY_GUARD_TECH §4.2 chưa liệt kê nhánh này (xem chỗ hở 16)"
+      ],
+      "depends": [
+        "E03-DB-01",
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05"
+      ]
+    },
+    {
+      "key": "E04-BE-01",
+      "type": "be",
+      "special": "sửa sau chốt (差額記録/逆仕訳)",
+      "title": "ADJ_REQUEST_CREATE: rpc_adjustment_request (tạo yêu cầu điều chỉnh)",
+      "goal": "ROLE-003 gửi yêu cầu sửa số lượng hoặc đơn giá, hoặc đảo toàn bộ, cho giao dịch đã chốt; không tự đổi dữ liệu giao dịch.",
+      "specs": [
+        "FR-ADJ-001",
+        "ADJ_ADJUSTMENT_DECIDE_TECH §4.1, §4.2",
+        "Q6, Q34, Q47 (đã chốt)"
+      ],
+      "dod": [
+        "Route: 401 khi không có phiên hoặc hết phiên; 403 khi không phải ROLE-003 (không cần aal2); 415 khi sai Content-Type, 400 khi body không phải object; id khớp số 1 đến 12 chữ số; kind chỉ correction hoặc reversal; newQty > 0, tối đa 3 số lẻ; newUnitPrice số nguyên > 0; reason sau trim rỗng hoặc quá 500 ký tự; evidencePaths rỗng hoặc quá 5 phần tử thì VALIDATION kèm fields",
+        "RPC kiểm lại has_role ROLE-003 (không audit khi FORBIDDEN); không có giao dịch thì NOT_FOUND; trạng thái khác confirmed thì INVALID_STATE (M_ADJ_002); giao dịch đã đảo toàn bộ (qty_effective bằng 0) thì INVALID_STATE (Q34: chặn điều chỉnh tiếp)",
+        "correction mà cả hai giá trị mới rỗng, hoặc bằng giá trị hiệu lực hiện tại, thì VALIDATION với fields.newQty hoặc fields.newUnitPrice là M_ADJ_017 kèm giá trị hiện tại; reversal mà có giá trị mới thì VALIDATION",
+        "Đã có yêu cầu pending của giao dịch, hoặc vi phạm chỉ mục duy nhất một phần khi đua: bắt đúng exception và trả ADJUSTMENT_PENDING_EXISTS (M_ADJ_001), không đổi mọi lỗi khác thành mã này",
+        "Đọc trades và trade_effective_values không khóa; không gọi lock_day_open (miễn trừ khóa ngày); INSERT yêu cầu với requested_by là người gọi, request_code lấy từ giá trị mặc định (không truyền)",
+        "Ghi outbox adjustment_requested (dedup theo id, không critical, payload chỉ có request_id và trade_id, không có lý do, tiền, đường dẫn chứng cứ) và audit adjustment.request trong cùng giao dịch, khóa audit lấy cuối; response có id, request_code, status",
+        "Đường dẫn chứng cứ: RPC kiểm từng phần tử thuộc người gọi (theo tiền tố gắn auth.uid() do SYS_EVIDENCE_UPLOAD_URL sinh, dạng chốt ở E04-DOC-01a) và tệp đã tồn tại trên Storage trước khi INSERT; đường dẫn giả, của người khác hoặc chưa PUT thành công thì VALIDATION kèm fields.evidencePaths (api-list SYS_EVIDENCE_UPLOAD_URL); kiểm loại và cỡ tệp thuộc SYS_EVIDENCE, kiểm tham chiếu thuộc RPC này",
+        "Miền số của qty mới, đơn giá mới và amount_delta tính được (qty_after nhân đơn giá sau, trừ qty_before nhân đơn giá trước, với trường không sửa lấy giá trị hiệu lực, reversal cho qty_after bằng 0) kiểm theo quyết định ở E04-DOC-01a; chưa chốt thì chỉ giữ giới hạn của SPEC và của cột (qty mới < 1.000.000.000, đơn giá tối đa 2.147.483.647), không tự đặt trần cho thành tiền (amount_effective là numeric không giới hạn precision, chỉ amount_delta là NUMERIC(18,3)); không để lỗi miền số thành 500"
+      ],
+      "depends": [
+        "E04-DB-01",
+        "E04-DB-03",
+        "E04-DOC-01a",
+        "E10-AUD-02",
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-SYS-02"
+      ]
+    },
+    {
+      "key": "E04-BE-02",
+      "type": "be",
+      "special": "sửa sau chốt (差額記録/逆仕訳)",
+      "title": "ADJ_REQUEST_LIST và ADJ_REQUEST_GET: danh sách và chi tiết yêu cầu điều chỉnh",
+      "goal": "Đọc yêu cầu cho S-022 và S-023, kèm cảnh báo tác động lên 参加上限.",
+      "specs": [
+        "FR-ADJ-001 AC6",
+        "FR-ADJ-002 AC6",
+        "api-list ADJ_REQUEST_LIST, ADJ_REQUEST_GET",
+        "ADR-013 R7",
+        "Q18, Q47 (đã chốt)"
+      ],
+      "dod": [
+        "ADJ_REQUEST_LIST: lọc status, tradeId, requestedBy=me, originDayStatus (locked hoặc open), q (khớp tiền tố request_code hoặc trade_code, không nhận id số), limit, cursor; items có đủ các khóa của api-list (request_code, kind, thông tin giao dịch, ngày gốc, giá trị hiệu lực, giá trị trước và mới, trạng thái, người yêu cầu, người quyết định, lý do từ chối)",
+        "ADJ_REQUEST_GET: trả yêu cầu với request_code, bút toán (nếu có), signed URL đọc chứng cứ (evidence[]), và impact.participation gồm posting_date, used_jpy, limit_jpy, exceeds",
+        "impact.participation chỉ cho bên mua 売買参加者 có hạn mức: used_jpy tính bằng participation_used_jpy cho ngày ghi sổ, chưa gồm bút toán đang duyệt; exceeds khi used_jpy cộng amount_delta lớn hơn hạn mức; chỉ cảnh báo (M_ADJ_009), không chặn duyệt",
+        "Quyền ROLE-003 và ROLE-005 cho cả hai API; ROLE-005 kiểm aal2 trước role; không có yêu cầu thì NOT_FOUND; tham số sai thì VALIDATION",
+        "Thứ tự trả về và cursor theo cùng một thứ tự, theo quyết định ở E04-DOC-01a (S-022 mới nhất trước, S-023 cũ nhất trước); originDayStatus=locked gồm locked và reopen_requested, open gồm open và reopened"
+      ],
+      "depends": [
+        "E04-DB-01",
+        "E04-DB-02",
+        "E04-DB-03",
+        "E04-DOC-01a",
+        "E03-BE-01",
+        "E01-BE-06",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01"
+      ]
+    },
+    {
+      "key": "E04-BE-03",
+      "type": "be",
+      "special": "sửa sau chốt (差額記録/逆仕訳)",
+      "parent_of": [
+        "E04-BE-03a",
+        "E04-BE-03b",
+        "E04-BE-03c",
+        "E04-BE-03d"
+      ],
+      "title": "ADJ_DECIDE: rpc_adjustment_decide (duyệt hoặc từ chối điều chỉnh)",
+      "goal": "ROLE-005 khác người yêu cầu duyệt (sinh bút toán, không ghi đè giao dịch gốc) hoặc từ chối; chia 4 sub-issue.",
+      "specs": [
+        "FR-ADJ-002",
+        "ADJ_ADJUSTMENT_DECIDE_TECH §4.3..§4.7",
+        "ADR-006 R2..R6, R9"
+      ],
+      "dod": [
+        "Hoàn thành khi 4 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E04-BE-03a",
+      "type": "be",
+      "special": "hai người (người yêu cầu khác người duyệt)",
+      "title": "rpc_adjustment_decide: route, aal2, khóa theo thứ tự, trạng thái, hai người và nhánh từ chối",
+      "goal": "Các kiểm trước khi quyết định, và toàn bộ nhánh từ chối.",
+      "specs": [
+        "ADJ_ADJUSTMENT_DECIDE_TECH §4.1, §4.3, §4.6",
+        "FR-ADJ-002 AC3, AC4",
+        "ADR-006 R2"
+      ],
+      "dod": [
+        "Route: 401, 403 (không phải ROLE-005), 415, 400; ROLE-005 cần aal2 ở proxy; id khớp số, decision chỉ approve hoặc reject, reject mà rejectReason rỗng hoặc quá 500 ký tự thì VALIDATION kèm fields",
+        "RPC kiểm aal2 trước has_role (MFA_REQUIRED trước FORBIDDEN, không audit); không có yêu cầu thì NOT_FOUND; trạng thái khác pending thì INVALID_STATE (M_ADJ_005), không audit",
+        "Người gọi chính là người yêu cầu (ví dụ tài khoản đổi role): ghi audit guard.write_blocked với SELF_APPROVAL_FORBIDDEN rồi trả object (không raise để audit commit); CHECK ở DB là lưới an toàn",
+        "Khóa yêu cầu FOR UPDATE, rồi lots, participant, trades (FOR NO KEY UPDATE, chỉ khóa hàng, không UPDATE), deliveries của giao dịch nếu có (FOR UPDATE), ngày, advisory incentive khi cần, audit cuối; nhánh từ chối vẫn theo cùng thứ tự để dùng một đường code",
+        "Từ chối: status rejected, reject_reason đã trim, decided_by, decided_at; không đụng trades, lots, incentive_results; ghi outbox adjustment_decided (decision reject) và audit adjustment.reject cuối cùng"
+      ],
+      "depends": [
+        "E04-DB-01",
+        "E04-DOC-01b",
+        "E03-DB-01",
+        "E01-BE-06",
+        "E10-AUD-02",
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E07-DB-01"
+      ],
+      "parent": "E04-BE-03"
+    },
+    {
+      "key": "E04-BE-03b",
+      "type": "be",
+      "special": "sửa sau chốt (差額記録/逆仕訳)",
+      "title": "rpc_adjustment_decide (duyệt): tính giá trị, chọn ngày ghi sổ, kiểm số dư lot",
+      "goal": "Tính bút toán, chọn ngày ghi sổ theo ADR-006 R5 và kiểm số dư lot không âm.",
+      "specs": [
+        "ADJ_ADJUSTMENT_DECIDE_TECH §4.4",
+        "FR-ADJ-002 AC2",
+        "ADR-006 R4, R5",
+        "Q18 (đã chốt)"
+      ],
+      "dod": [
+        "Giá trị trước lấy từ trade_effective_values sau khi đã khóa trades (qty_before, unit_price_before); giá trị sau: correction thì dùng giá trị mới hoặc giữ giá trị trước cho phần để trống, reversal thì qty_after bằng 0 và giữ đơn giá; tính qty_delta, unit_price_delta, amount_delta đúng công thức CHECK của bảng",
+        "Chọn ngày ghi sổ: lock_day_open của ngày gốc (FOR SHARE, luôn lấy kể cả khi ngày gốc đã khóa) true thì dùng ngày gốc; false thì lấy current_business_day và lock_day_open của ngày đó (FOR SHARE) true thì dùng ngày hiện tại; cả hai false thì NO_OPEN_BUSINESS_DAY (M_ADJ_006) và yêu cầu giữ pending; hai khóa FOR SHARE giữ tới COMMIT, ngày gốc lấy trước rồi mới tới ngày ghi sổ",
+        "Số dư lot mới bằng số dư trừ qty_delta (reversal thì cộng qty_before); âm thì INSUFFICIENT_QUANTITY với params [lot_code, available_qty] (M_ADJ_004), không ghi gì; trần initial_qty sau hoàn: DECIDE §4.4 #5 khẳng định số hoàn không vượt số đã giữ, nhưng F-009 cộng dương trước đó làm số hoàn vượt CHECK, chưa chốt (E02-CLR-02); theo quyết định đó, không tự bỏ CHECK hay cắt số hoàn",
+        "Không chặn khi vượt 参加上限 (ADR-013 R7), chỉ cảnh báo ở màn; hôm nay chưa có ngày thì current_business_day tạo ngày open nên NO_OPEN_BUSINESS_DAY chỉ xảy ra khi hôm nay đã 締め hoặc chờ 締め再開; không kiểm 休市日 (Q17, Q57 đã chốt, chờ khách xác nhận)",
+        "Khi NO_OPEN_BUSINESS_DAY: yêu cầu vẫn pending, không có bút toán và không có delta; audit hoặc không audit theo quyết định ở E04-DOC-01b (hai nguồn khác nhau); ca QA kiểm số dòng audit",
+        "Kiểm lại miền amount_delta thực tế (sau khi khóa trades, từ giá trị hiệu lực mới nhất) trước INSERT bút toán, theo hợp đồng chốt ở E04-DOC-01a; vượt miền thì trả lỗi có mã, không để thành 500 và không ghi gì"
+      ],
+      "depends": [
+        "E04-BE-03a",
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05",
+        "E02-DB-01",
+        "E02-CLR-02"
+      ],
+      "parent": "E04-BE-03"
+    },
+    {
+      "key": "E04-BE-03c",
+      "type": "be",
+      "special": "sửa sau chốt (差額記録/逆仕訳)",
+      "title": "rpc_adjustment_decide (duyệt): ghi bút toán, số dư lot, audit, outbox và response",
+      "goal": "Ghi bút toán và các hệ quả trong cùng một giao dịch.",
+      "specs": [
+        "ADJ_ADJUSTMENT_DECIDE_TECH §4.5, §4.7",
+        "FR-ADJ-002 AC1",
+        "ADR-006 R4, R9"
+      ],
+      "dod": [
+        "INSERT bút toán với ngày ghi sổ, ngày gốc, người duyệt; không truyền created_at (dùng clock_timestamp mặc định); giao dịch gốc không bị sửa",
+        "Số dư lot qua helper chung: qty_delta lớn hơn 0 thì lot_reserve_qty, nhỏ hơn 0 (kể cả reversal) thì lot_release_qty, rồi lot_refresh_status; cùng giao dịch",
+        "Cập nhật yêu cầu thành approved với decided_by, decided_at; audit adjustment.approve với before là giá trị hiệu lực trước và after gồm entry_id, entry_type, qty_after, unit_price_after, amount_delta, business_day_id, is_post_lock, incentive_delta_jpy, khóa audit lấy cuối",
+        "Outbox adjustment_decided (decision approve, dedup theo yêu cầu, không critical); không phát sự kiện báo cáo dù is_post_lock (báo cáo của ngày ghi sổ tự lấy bút toán khi ngày đó 締め)",
+        "Lỗi bất ngờ (trigger ngày, CHECK, vi phạm duy nhất request_id hoặc adjustment_entry_id của incentive_results) rollback toàn bộ, 500 kèm log ERROR và pgCode",
+        "Response 200 gồm ok, entry_id, entry_type, business_day_id, is_post_lock và kết quả thưởng nhận từ E04-BE-03d nếu hợp đồng ở E04-DOC-01b chốt có; đúng một lần write_audit adjustment.approve cuối cùng, gồm cả phần thưởng; điểm nối nhận kết quả delta được hoàn tất bởi E04-BE-03d trước khi endpoint được coi là xong"
+      ],
+      "depends": [
+        "E04-BE-03b",
+        "E04-DB-02",
+        "E02-BE-08",
+        "E02-BE-09",
+        "E10-AUD-02",
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03"
+      ],
+      "parent": "E04-BE-03"
+    },
+    {
+      "key": "E04-BE-03d",
+      "type": "be",
+      "special": "完納奨励金 delta",
+      "title": "rpc_adjustment_decide (duyệt): gọi bước tạo delta 完納奨励金 của E-06 trong cùng giao dịch",
+      "goal": "Nối rpc_adjustment_decide với logic delta thưởng do E-06 định nghĩa; epic này chỉ sở hữu điểm gọi và thứ tự khóa.",
+      "specs": [
+        "ADJ_ADJUSTMENT_DECIDE_TECH §4.5 #3, #4",
+        "INC_POST_LOCK_DELTA_TECH §4.1",
+        "FR-ADJ-002 AC5",
+        "ADR-006 R6",
+        "Q14, Q33 (đã chốt)"
+      ],
+      "dod": [
+        "Điều kiện tạo delta là giao dịch đã có dòng original của incentive_results (không phải is_post_lock): ngày gốc reopened đã có original vẫn cần delta; chưa thấy original thì lấy advisory incentive theo ngày gốc rồi đọc lại, sau ngày và trước audit",
+        "Cùng giao dịch với bút toán, không qua outbox; phiên bản tỷ lệ lấy từ dòng original, không dùng bản hiện hành; công thức và làm tròn delta (kể cả delta âm theo Q33) thuộc E06-INC-POST-LOCK-DELTA, không viết lại ở đây",
+        "Kiểm thử tích hợp: giao dịch có original thì ra đúng một dòng delta gắn ngày ghi sổ; không có original thì không ra delta; giao dịch bị chặn thì không ghi gì",
+        "Kiểm thứ tự khóa không tạo vòng chờ với job tính thưởng (job giữ advisory rồi chờ khóa khóa ngoại của trades, nên RPC chỉ dùng FOR NO KEY UPDATE trên trades)",
+        "Trả kết quả có cấu trúc cho E04-BE-03c: none (ngày gốc chưa khóa), deferred (chờ job bù), rate_missing, not_timely, computed; thiếu tỷ lệ gốc hoặc job chưa chạy không rollback bút toán, không thành lỗi (FR-INC-003 AC4); E-06 giữ công thức, ops_alerts và ngưỡng đúng hạn, E-04 giữ việc truyền kết quả và commit nguyên tử",
+        "Ca kiểm: thiếu tỷ lệ gốc, lần khóa chưa có incentive_runs, ngày gốc reopened có original, ngày gốc chưa từng khóa"
+      ],
+      "depends": [
+        "E04-BE-03c",
+        "E06-DB-01",
+        "E06-BE-04"
+      ],
+      "parent": "E04-BE-03"
+    },
+    {
+      "key": "E04-FE-01",
+      "type": "fe",
+      "special": "sửa sau chốt (差額記録/逆仕訳)",
+      "parent_of": [
+        "E04-FE-01a",
+        "E04-FE-01b",
+        "E04-FE-01c"
+      ],
+      "title": "S-022 ADJ_ADJUSTMENT_REQUEST: yêu cầu điều chỉnh giao dịch đã chốt",
+      "goal": "Màn ba bước của ROLE-003 (chọn và nhập thay đổi, lý do và chứng cứ, xác nhận), 4 trạng thái theo spec, chia 3 sub-issue.",
+      "specs": [
+        "ADJ_ADJUSTMENT_REQUEST_SPEC (4 trạng thái: normal, evidence-error, confirm, pending-exists; bước ①②③)",
+        "FR-ADJ-001"
+      ],
+      "dod": [
+        "Hoàn thành khi 3 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E04-FE-01a",
+      "type": "fe",
+      "special": "sửa sau chốt (差額記録/逆仕訳)",
+      "title": "S-022a: bước 1, chọn giao dịch đã chốt và nhập thay đổi",
+      "goal": "Chọn giao dịch, hiển thị giá trị hiệu lực, chọn loại và nhập giá trị mới (trạng thái normal, pending-exists).",
+      "specs": [
+        "ADJ_ADJUSTMENT_REQUEST_SPEC §4.2, A1..A4, Event (C-4, G-1..G-9)",
+        "FR-ADJ-001 AC1, AC2, AC4"
+      ],
+      "dod": [
+        "Mở màn: gọi song song SYS_ME và ADJ_REQUEST_LIST (limit 5); bảng J rỗng hiển thị M_COM_021; có tham số tradeId trên URL thì tự chọn giao dịch; chỉ ROLE-003, không bắt aal2",
+        "Ô chọn giao dịch (C-4): gõ từ 1 ký tự, sau 300 ms gọi TRD_LIST với status confirmed, tối đa 20 dòng, rỗng hiển thị M_COM_021; chọn giao dịch thì gọi song song TRD_GET và ADJ_REQUEST_LIST (tradeId, pending); đang nhập dở mà đổi giao dịch thì hỏi M_COM_020",
+        "Giao dịch không còn confirmed hiển thị M_ADJ_002 và khóa nút Tiếp tục; đã có yêu cầu pending hiển thị M_ADJ_001 kèm liên kết xem yêu cầu (trạng thái pending-exists), số lượng và đơn giá hiện —, khóa nút Tiếp tục",
+        "Loại correction: tick số lượng và hoặc đơn giá; số lượng mới ≤ 0 thì M_COM_011, sai định dạng, quá 3 số lẻ hoặc ≥ 1.000.000.000 thì M_COM_012, bằng giá trị hiệu lực thì M_ADJ_017; đơn giá mới ≤ 0 hoặc không nguyên thì M_COM_011, tối đa 2.147.483.647, bằng giá trị hiệu lực thì M_ADJ_017; không tick gì thì khóa nút Tiếp tục (không có thông báo); loại reversal khóa các ô giá trị, hiển thị số lượng sau bằng 0",
+        "Giá trị hiệu lực lấy từ trade_effective_values; chênh lệch tính ở client chỉ để xem trước; không kiểm số dư lot, 参加上限 hay trạng thái ngày gốc ở bước này; Q34 chặn giao dịch đã đảo toàn bộ do server trả INVALID_STATE (thông báo chốt ở E04-DOC-01a)",
+        "Bảng J (yêu cầu gần đây của tôi): lần đầu và tải thêm đều gọi với requestedBy=me, 5 dòng đầu rồi 20 dòng mỗi lần; link Xem yêu cầu ở trạng thái pending-exists chuyển bảng J sang lọc theo tradeId của giao dịch đang chọn với mọi người gửi (không requestedBy), cuộn tới dòng request_code, không điều hướng sang S-023; kiểm bằng hai tài khoản ROLE-003",
+        "Giao dịch đã chọn hiển thị đủ khối thông tin E-1..E-10 (mã và trạng thái, loại, lot và loài, bên mua, ngày gốc kèm trạng thái ngày, số lượng, đơn giá, thành tiền hiệu lực theo định dạng của SPEC, số lần đã điều chỉnh, yêu cầu đang chờ); banner D-1 ngày gốc đã khóa là chữ tĩnh (info), ẩn khi ngày gốc open hoặc reopened và không lỗi; tradeId trên URL không phải số thì bỏ qua",
+        "Đổi loại sang reversal thì khóa và xóa giá trị các ô, SL sau bằng 0 và chênh lệch tiền bằng âm thành tiền hiệu lực; đổi lại correction hoặc bỏ tick một ô thì xóa giá trị ô đó"
+      ],
+      "depends": [
+        "E04-BE-01",
+        "E04-BE-02",
+        "E03-BE-08",
+        "E10-SYS-01"
+      ],
+      "parent": "E04-FE-01"
+    },
+    {
+      "key": "E04-FE-01b",
+      "type": "fe",
+      "special": "sửa sau chốt (差額記録/逆仕訳)",
+      "title": "S-022b: bước 2, lý do và chứng cứ đính kèm",
+      "goal": "Nhập lý do và tải tệp chứng cứ lên Storage (trạng thái evidence-error).",
+      "specs": [
+        "ADJ_ADJUSTMENT_REQUEST_SPEC §4.2 (H-1, H-3), Event (H-*)",
+        "FR-ADJ-001 AC3",
+        "Q31 (mở)"
+      ],
+      "dod": [
+        "Lý do bắt buộc 1 đến 500 ký tự sau trim (rỗng thì M_COM_009, quá thì M_COM_010; ô chặn ở 500 ký tự)",
+        "Tệp chứng cứ: 1 đến 5 tệp; mỗi tệp kiểm ở client trước khi gọi API: chỉ image/jpeg, image/png, application/pdf (sai thì M_COM_025), tối đa 10 MB (quá thì M_COM_026), quá 5 tệp thì M_COM_027 và bỏ tệp thừa",
+        "Với mỗi tệp hợp lệ: gọi SYS_EVIDENCE_UPLOAD_URL rồi PUT lên signed_url; hiển thị đang tải, thành công, hoặc lỗi (M_COM_028 kèm tên tệp, cho xóa và chọn lại); xóa một dòng chỉ bỏ khỏi danh sách (tệp đã lên Storage để lại, dọn theo chính sách lưu trữ chờ Q31)",
+        "Bấm Tiếp tục khi 0 tệp thành công thì M_ADJ_003 ngay ô chứng cứ và focus; quay lại bước trước giữ nguyên dữ liệu",
+        "Nút Tiếp tục chỉ bật khi lý do hợp lệ, có ít nhất một tệp tải thành công và không có tệp nào đang tải"
+      ],
+      "depends": [
+        "E04-FE-01a",
+        "E10-SYS-02"
+      ],
+      "parent": "E04-FE-01"
+    },
+    {
+      "key": "E04-FE-01c",
+      "type": "fe",
+      "special": "sửa sau chốt (差額記録/逆仕訳)",
+      "title": "S-022c: bước 3, xác nhận và gửi yêu cầu",
+      "goal": "Bảng trước, sau, chênh lệch và gửi yêu cầu (trạng thái confirm).",
+      "specs": [
+        "ADJ_ADJUSTMENT_REQUEST_SPEC Event (I-*), Error Handling",
+        "FR-ADJ-001 AC1, AC5",
+        "M_ADJ_014"
+      ],
+      "dod": [
+        "Bước 3 hiển thị bảng giá trị trước, sau và chênh lệch; gửi yêu cầu: khóa cả nút Quay lại và nút Gửi, hiện spinner, gọi ADJ_REQUEST_CREATE; thành công thì toast M_ADJ_014 kèm request_code, xóa dữ liệu nhập, về bước 1, tải lại danh sách (giao dịch hiện M_ADJ_001 và yêu cầu mới ở đầu bảng J)",
+        "Lỗi: ADJUSTMENT_PENDING_EXISTS thì về bước 1 hiện M_ADJ_001 và tải lại để có request_code, giữ dữ liệu; INVALID_STATE thì M_ADJ_002 và về bước 1; VALIDATION thì về bước chứa trường lỗi, hiển thị mã theo fields và banner M_COM_008; NOT_FOUND thì M_COM_007 và bỏ chọn giao dịch",
+        "Mất mạng hoặc timeout thì M_COM_003, bật lại nút, giữ dữ liệu; 503 thì M_COM_002; 500 thì hộp thoại M_COM_001 kèm requestId; hết phiên thì về đăng nhập và dữ liệu đang nhập mất (không lưu nháp); sai Content-Type thì M_COM_018",
+        "Rời màn khi đã có dữ liệu thì hỏi M_COM_020; màn bắt buộc online, không có hàng đợi offline",
+        "Bảng J: Xem tất cả tải thêm 20 dòng tại chỗ (OQ-4 còn mở, giả định theo spec)",
+        "Bước 3 hiển thị đủ: loại yêu cầu (差額記録 hoặc 逆仕訳), ngày dự kiến ghi (ngày gốc nếu open hoặc reopened; ngày đang mở lúc duyệt, hôm nay, nếu locked hoặc reopen_requested), lý do (cắt 80 ký tự), danh sách tên và cỡ tệp, chữ tĩnh cần ROLE-005 khác bạn duyệt"
+      ],
+      "depends": [
+        "E04-FE-01b",
+        "E04-BE-01"
+      ],
+      "parent": "E04-FE-01"
+    },
+    {
+      "key": "E04-FE-02",
+      "type": "fe",
+      "special": "hai người (người yêu cầu khác người duyệt)",
+      "parent_of": [
+        "E04-FE-02a",
+        "E04-FE-02b",
+        "E04-FE-02c"
+      ],
+      "title": "S-023 ADJ_ADJUSTMENT_APPROVAL: phê duyệt hoặc từ chối điều chỉnh",
+      "goal": "Danh sách chờ duyệt, chi tiết và các hộp thoại của ROLE-005, 7 trạng thái theo spec, chia 3 sub-issue.",
+      "specs": [
+        "ADJ_ADJUSTMENT_APPROVAL_SPEC (7 trạng thái: normal, list, approve-confirm, reject-modal, insufficient, no-open-day, self-approval)",
+        "FR-ADJ-002"
+      ],
+      "dod": [
+        "Hoàn thành khi 3 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E04-FE-02a",
+      "type": "fe",
+      "special": "hai người (người yêu cầu khác người duyệt)",
+      "title": "S-023a: danh sách yêu cầu chờ duyệt",
+      "goal": "Route danh sách của ROLE-005 (trạng thái list).",
+      "specs": [
+        "ADJ_ADJUSTMENT_APPROVAL_SPEC §4.2 (D-1, D-2), Event (D-*)",
+        "Q47 (đã chốt)"
+      ],
+      "dod": [
+        "Chỉ ROLE-005: aal1 thì sang bước TOTP kèm M_COM_019 rồi quay lại; mở route gọi song song SYS_ME và ADJ_REQUEST_LIST (status pending, q lấy từ URL); rỗng hiển thị M_COM_021",
+        "Ô tìm (D-1): trim, tối đa 50 ký tự, khớp tiền tố request_code hoặc trade_code không phân biệt hoa thường, không nhận id số; sau 300 ms gọi lại và cập nhật tham số q trên URL; bộ lọc ngày gốc (D-2): tất cả, locked, open",
+        "Danh sách lấy tối đa 100 dòng, không có nút Tải thêm (OQ-5 còn mở, giả định theo spec); danh sách chỉ pending, không có lịch sử đã xử lý (OQ-6 còn mở)",
+        "Bấm Chi tiết thì mở trang chi tiết; quay lại danh sách giữ q và bộ lọc",
+        "Danh sách xếp requested_at tăng dần (cũ nhất trước) để giới hạn 100 dòng không bỏ sót yêu cầu cũ; bộ lọc Đã khóa gồm locked và reopen_requested, Đang mở gồm open và reopened; không thêm Tải thêm khi OQ-5 chưa chốt"
+      ],
+      "depends": [
+        "E04-BE-02",
+        "E01-BE-06",
+        "E10-SYS-01"
+      ],
+      "parent": "E04-FE-02"
+    },
+    {
+      "key": "E04-FE-02b",
+      "type": "fe",
+      "special": "hai người (người yêu cầu khác người duyệt)",
+      "title": "S-023b: chi tiết yêu cầu, tác động và chế độ chỉ đọc",
+      "goal": "Route chi tiết (trạng thái normal, self-approval).",
+      "specs": [
+        "ADJ_ADJUSTMENT_APPROVAL_SPEC §4.2, A1, A2, A4, Event (mở /adjustments/approval/[id], H-2, H-3)"
+      ],
+      "dod": [
+        "Mở chi tiết: gọi SYS_ME và ADJ_REQUEST_GET rồi TRD_GET theo trade_id; yêu cầu không còn pending thì chế độ chỉ đọc (ẩn nút Từ chối và Phê duyệt, hiển thị quyết định)",
+        "Người xem chính là người yêu cầu thì hiển thị M_ADJ_007 và ẩn nút duyệt, chỉ xem (trạng thái self-approval)",
+        "Hiển thị giá trị hiệu lực, giá trị trước và sau, chênh lệch, số dư lot sau điều chỉnh (G-2), ngày ghi sổ dự kiến (G-3), cảnh báo 参加上限 từ impact.participation khi exceeds (G-4, chỉ cảnh báo, không chặn); chỉ để báo trước, nguồn sự thật là RPC",
+        "Chứng cứ: ảnh mở lightbox, PDF mở signed URL ở tab mới; URL hết hạn thì gọi lại ADJ_REQUEST_GET rồi mở",
+        "Khối G-5 (chữ tĩnh về delta 完納奨励金) hiện khi ngày gốc đã từng khóa (sau khóa, hoặc ngày gốc reopened): nếu giao dịch đã có dòng original thì duyệt ghi delta theo phiên bản tỷ lệ của dòng gốc cùng lúc; không dùng is_post_lock làm điều kiện duy nhất; số tiền thưởng hiển thị ở màn của E-06"
+      ],
+      "depends": [
+        "E04-FE-02a",
+        "E03-BE-08"
+      ],
+      "parent": "E04-FE-02"
+    },
+    {
+      "key": "E04-FE-02c",
+      "type": "fe",
+      "special": "hai người (người yêu cầu khác người duyệt)",
+      "title": "S-023c: hộp thoại phê duyệt, từ chối và các lỗi duyệt",
+      "goal": "Các hộp thoại J, K, L và xử lý lỗi của ADJ_DECIDE (trạng thái approve-confirm, reject-modal, insufficient, no-open-day).",
+      "specs": [
+        "ADJ_ADJUSTMENT_APPROVAL_SPEC §4.2 (K-2), Event (I-2, I-3, J-*, K-*, L-*), Error Handling",
+        "FR-ADJ-002 AC2, AC3, AC4"
+      ],
+      "dod": [
+        "Bấm Phê duyệt (người xem khác người yêu cầu): số dư sau nhỏ hơn 0 thì mở hộp thoại L M_ADJ_004, không có ngày mở thì mở L M_ADJ_006, cả hai không mở J và không gọi API; còn lại mở hộp thoại J: dòng xác nhận ngày ghi sổ J-2 (M_ADJ_008, tham số ngày gốc và ngày ghi sổ DD/MM/YYYY) chỉ hiện khi ngày ghi sổ khác ngày gốc (duyệt sau khóa), ngày open hoặc reopened ghi vào ngày gốc không hiện; cảnh báo M_ADJ_009 khi khối G-4 hiện; xác nhận thì khóa cả hai nút, gọi ADJ_DECIDE (approve), thành công thì toast M_ADJ_015 kèm request_code, về danh sách và tải lại",
+        "Bấm Từ chối: hộp thoại K, lý do bắt buộc (trim rỗng thì M_COM_009, quá 500 thì M_COM_010), nút xác nhận chỉ bật khi có lý do; đóng khi đã có nội dung thì hỏi M_COM_020; thành công toast M_ADJ_016, về danh sách và tải lại",
+        "Lỗi duyệt: INSUFFICIENT_QUANTITY thì đóng J, mở L M_ADJ_004 và tải lại TRD_GET; NO_OPEN_BUSINESS_DAY thì đóng J, mở L M_ADJ_006 và gọi lại SYS_ME; SELF_APPROVAL_FORBIDDEN thì banner M_ADJ_007 và tải lại thành chế độ xem; INVALID_STATE thì banner M_ADJ_005 và tải lại chỉ đọc; VALIDATION thì giữ K và hiển thị lỗi lý do; NOT_FOUND thì M_COM_007",
+        "MFA_REQUIRED thì bước TOTP và quay lại (hộp thoại mất nội dung); mất mạng hoặc timeout thì M_COM_003, bật lại nút, giữ nội dung hộp thoại; 503 thì M_COM_002; 500 thì M_COM_001 kèm requestId; sai Content-Type thì M_COM_018; không nhận ghi chú khi phê duyệt vì DB chỉ có reject_reason",
+        "Hộp thoại L: nút Đóng đóng L và ở lại chi tiết, yêu cầu vẫn pending; M_ADJ_004 kèm gợi ý Từ chối kèm lý do để ROLE-003 gửi lại, M_ADJ_006 kèm gợi ý yêu cầu vẫn chờ, duyệt lại ở ngày mở kế tiếp",
+        "Lỗi dùng chung: ACCOUNT_DISABLED thì M_PAU_002 về đăng nhập, hết phiên thì M_COM_004 hoặc M_COM_005, FORBIDDEN thì M_COM_006; đổi màn, đăng xuất hoặc đổi ngôn ngữ khi hộp thoại K có nội dung thì hỏi M_COM_020; khi request đang chạy khóa cả nút xác nhận lẫn nút quay lại"
+      ],
+      "depends": [
+        "E04-FE-02b",
+        "E04-BE-03c",
+        "E04-BE-03"
+      ],
+      "parent": "E04-FE-02"
+    },
+    {
+      "key": "E04-FE-03",
+      "type": "fe",
+      "special": "khóa ngày hai lớp (F-018)",
+      "title": "S-024 ADJ_LOCKED_DAY_BLOCK: component chung cho mọi phản hồi DAY_LOCKED",
+      "goal": "Hộp thoại chặn ghi vào ngày đã khóa, dùng lại ở mọi màn ghi; không gọi API.",
+      "specs": [
+        "ADJ_LOCKED_DAY_BLOCK_SPEC (3 trạng thái: normal, role-007, reopened)",
+        "ADJ_LOCKED_DAY_GUARD_TECH §4.5",
+        "FR-ADJ-003"
+      ],
+      "dod": [
+        "Mở khi API ghi của màn chủ trả 409 DAY_LOCKED: màn chủ dừng spinner và giữ nguyên dữ liệu form; hộp thoại chặn tương tác nền, focus nút Đóng; không tự kiểm trạng thái ngày để mở trước (nguồn sự thật là server)",
+        "Biến thể: params[1] là reopened thì M_ADJ_011 với ngày DD/MM/YYYY và mã giao dịch (Q20 đã chốt: vẫn qua điều chỉnh, giữ biến thể); còn lại M_ADJ_010 với ngày; params rỗng thì màn chủ truyền ngày từ dữ liệu đã tải, mặc định M_ADJ_010",
+        "Dòng gợi ý: role là ROLE-003 và giao dịch confirmed thì M_ADJ_012 kèm nút Yêu cầu điều chỉnh sang S-022 theo tradeId (màn chủ có dữ liệu chưa lưu thì hỏi M_COM_020 trước); mọi trường hợp khác (ROLE-004, ROLE-005, ROLE-007, giao dịch mới hoặc pending) thì M_ADJ_013 và không có nút",
+        "Chữ tĩnh nêu quy tắc áp cho mọi tài khoản kể cả ROLE-007 và ghi chú dữ liệu chưa lưu được giữ; Đóng hoặc Esc thì đóng và focus về nút đã bấm; thay toast riêng của các màn chủ (E03-FE-02b, E03-FE-03, E03-FE-04, E03-FE-06, E03-FE-07, và màn giao hàng, tranh chấp)",
+        "Không hiển thị cho luồng miễn trừ (sửa thuộc tính lot, yêu cầu và duyệt điều chỉnh không bao giờ trả DAY_LOCKED)"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E04-QA-01",
+      "type": "qa",
+      "special": "sửa sau chốt (差額記録/逆仕訳)",
+      "title": "QA đầu cuối: yêu cầu, duyệt và từ chối điều chỉnh",
+      "goal": "Kiểm thử luồng điều chỉnh sau chốt từ trình duyệt thật.",
+      "specs": [
+        "FR-ADJ-001",
+        "FR-ADJ-002",
+        "ADR-006"
+      ],
+      "dod": [
+        "Kịch bản: ROLE-003 gửi yêu cầu correction (số lượng, đơn giá) và reversal kèm chứng cứ; ROLE-005 khác người duyệt thì sinh bút toán, giao dịch gốc không đổi, số dư lot đổi đúng, request_code ADJ-NNNNNN hiển thị ở danh sách và thông báo",
+        "Ca chặn: giao dịch chưa chốt, đã có yêu cầu pending, giá trị mới bằng giá trị hiện tại, thiếu chứng cứ, tệp sai loại hoặc quá cỡ, đã đảo toàn bộ (Q34); tự duyệt khi tài khoản đổi role; từ chối thiếu lý do",
+        "Ca số dư: duyệt làm số dư lot âm thì bị từ chối, yêu cầu vẫn pending; ca reversal hoàn đúng qty_before",
+        "Mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả"
+      ],
+      "depends": [
+        "E04-FE-01",
+        "E04-FE-02",
+        "E03-BE-04",
+        "E02-BE-07"
+      ]
+    },
+    {
+      "key": "E04-QA-02",
+      "type": "qa",
+      "special": "khóa ngày hai lớp (F-018)",
+      "title": "QA: chặn ghi vào ngày khóa hai lớp và miễn trừ",
+      "goal": "Kiểm thử lớp 1 (RPC), lớp 2 (trigger) và các luồng miễn trừ.",
+      "specs": [
+        "FR-ADJ-003",
+        "ADJ_LOCKED_DAY_GUARD_TECH §4.1..§4.5",
+        "ADR-006 R8"
+      ],
+      "dod": [
+        "Lớp 1: mọi RPC ghi giao dịch trên ngày locked hoặc reopen_requested trả DAY_LOCKED kèm audit guard.write_blocked; ngày reopened nhận chốt, từ chối, hủy nhưng không nhận sửa trực tiếp trường số liệu của giao dịch đã chốt",
+        "Lớp 2 bằng SQL tay của service_role và owner (chỉ kiểm exception, rollback, mã hint và detail; không đòi log): UPDATE số liệu của giao dịch ở ngày khóa bị chặn bằng DAY_LOCKED; UPDATE trường số liệu của giao dịch đã chốt ở ngày open bị chặn bằng INVALID_STATE; sáu trường qty, unit_price, buyer_id, lot_id, business_day_id, trade_type đều bị bảo vệ; chuyển trạng thái pending sang confirmed vẫn được",
+        "Luồng miễn trừ: yêu cầu điều chỉnh, duyệt điều chỉnh và sửa thuộc tính lot vẫn ghi được khi ngày gốc đã khóa; ROLE-007 bị chặn như mọi tài khoản",
+        "Component S-024: biến thể reopened, nút gợi ý chỉ hiện cho ROLE-003 với giao dịch confirmed, không hiện cho các role còn lại; màn chủ giữ dữ liệu chưa lưu",
+        "Mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả",
+        "INSERT giao dịch mới: ngày reopened là hôm nay được phép; ngày reopened của hôm qua trở về trước bị chặn bằng DAY_LOCKED; giao dịch pending của ngày reopened cũ vẫn chốt, từ chối, hủy được",
+        "Ca qua route ứng dụng (route gọi RPC qua PostgREST): lỗi trigger ra 409 kèm requestId và có log WARN guard.trigger_blocked kèm code và pgCode; ca gọi PostgREST trực tiếp chỉ kiểm exception, hint, detail thô"
+      ],
+      "depends": [
+        "E04-DB-04",
+        "E04-FE-03",
+        "E03-BE-02",
+        "E03-BE-04",
+        "E04-BE-03",
+        "E05-BE-04",
+        "E05-BE-05"
+      ]
+    },
+    {
+      "key": "E04-QA-03",
+      "type": "qa",
+      "special": "sửa sau chốt (差額記録/逆仕訳)",
+      "title": "QA: ngày ghi sổ, đồng thời và delta 完納奨励金",
+      "goal": "Kiểm thử chọn ngày ghi sổ, tranh khóa và bút toán sau khóa trên PostgreSQL.",
+      "specs": [
+        "ADJ_ADJUSTMENT_DECIDE_TECH §4.3, §4.4, §4.5",
+        "ADR-006 R4..R6",
+        "REQ-001 §8.1 #2, #3"
+      ],
+      "dod": [
+        "Ngày ghi sổ: ngày gốc open hoặc reopened thì ghi vào ngày gốc; ngày gốc locked và hôm nay open thì ghi vào hôm nay (is_post_lock đúng); cả hai khóa thì NO_OPEN_BUSINESS_DAY và yêu cầu vẫn pending",
+        "Mốc thời gian: created_at của bút toán duyệt sau khóa lớn hơn locked_at của ngày đó (clock_timestamp), và bút toán mới nhất của giao dịch là id lớn nhất",
+        "Đồng thời: hai ROLE-005 cùng duyệt một yêu cầu thì đúng một thành công; duyệt đua với chốt ngày và với giữ chỗ của E-03; duyệt đua với job tính thưởng không tạo vòng chờ",
+        "Delta thưởng: giao dịch có dòng original thì ra đúng một dòng delta gắn ngày ghi sổ (cả khi ngày gốc reopened); không có original thì không ra delta; có thể báo kết quả trung gian khi E06-INC-POST-LOCK-DELTA chưa có, nhưng QA-03 chỉ hoàn thành khi toàn bộ ca delta bắt buộc đã chạy và đạt (báo cáo hoãn không phải tiêu chí hoàn thành)",
+        "Mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả",
+        "Hoàn sau F-009 dương: lot có giao dịch confirmed, F-009 cộng thêm, rồi duyệt reversal; kết quả theo quyết định của E02-CLR-02",
+        "NO_OPEN_BUSINESS_DAY: đếm số dòng audit theo quyết định ở E04-DOC-01b, không có bút toán và delta, yêu cầu vẫn pending"
+      ],
+      "depends": [
+        "E04-BE-03",
+        "E03-BE-02",
+        "E03-BE-04",
+        "E05-BE-03",
+        "E06-BE-04",
+        "E02-CLR-02"
+      ]
+    }
+  ]
+}

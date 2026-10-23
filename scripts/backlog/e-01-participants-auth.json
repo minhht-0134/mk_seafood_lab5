@@ -1,0 +1,1233 @@
+{
+  "epic": {
+    "key": "E-01",
+    "title": "E-01 Participant và xác thực (participants-auth)",
+    "goal": "Đăng nhập, MFA, quản lý tài khoản ROLE-007, hồ sơ participant 4 nhóm, vòng đời trạng thái 有効/一時停止/失効/再審査, 参加上限 và cảnh báo sắp hết hạn.",
+    "specs": [
+      "FR-PAU-001..008",
+      "design/participants-auth",
+      "PAU_DB",
+      "ADR-004",
+      "ADR-010",
+      "ADR-011",
+      "ADR-013 (phần cấu hình)"
+    ],
+    "out_of_scope": [
+      "Kiểm hiệu lực và 参加上限 lúc tạo/chốt giao dịch (E-03)",
+      "Cấu hình ngưỡng cảnh báo, gửi thông báo (E-08)",
+      "Báo cáo RPT-03 (E-09)",
+      "Di trú dữ liệu participant (E-11)"
+    ]
+  },
+  "issues": [
+    {
+      "key": "E01-DB-01",
+      "type": "db",
+      "title": "Migration PAU: mở rộng bảng tài khoản (profiles) cho khóa đăng nhập",
+      "goal": "Thêm cột đếm lần sai, hạn khóa, hoạt động cuối; ràng buộc email duy nhất; view rút gọn tên và role.",
+      "specs": [
+        "PAU_DB §4.1, §4.8, §7",
+        "ADR-011 R1, R3, R6",
+        "FR-PAU-001",
+        "FR-PAU-002"
+      ],
+      "dod": [
+        "Có cột failed_login_count, locked_until, last_activity_at; CHECK trạng thái khóa tạm phải có locked_until",
+        "Chỉ mục duy nhất theo lower(email)",
+        "Backfill các dòng khóa tạm cũ trước khi bật CHECK",
+        "View profiles_brief trả đúng 3 cột id, full_name, role; không lộ email, mã nhân viên, trạng thái",
+        "Migration chạy được trên DB trống và DB có dữ liệu seed"
+      ],
+      "depends": [
+        "E10-DB-01",
+        "E10-DB-02"
+      ]
+    },
+    {
+      "key": "E01-DB-02",
+      "type": "db",
+      "special": "許可/承認 và căn cứ chờ",
+      "title": "Migration PAU: bảng participant và căn cứ tham gia",
+      "goal": "Tạo participants và participant_bases theo mô hình căn cứ × trạng thái. View participants_brief tạo ở E01-BE-01, sau hàm kiểm hiệu lực.",
+      "specs": [
+        "PAU_DB §2.1, §4.2, §4.3, §6",
+        "ADR-004 R1, R5, R9",
+        "ADR-013 R1"
+      ],
+      "dod": [
+        "CHECK nhóm × trạng thái, gồm under_review; trigger cấm đổi group_type",
+        "participant_bases: trigger khớp loại căn cứ với nhóm; chỉ mục duy nhất một phần cho căn cứ hiện hành và căn cứ chờ; chỉ mục theo hạn hết hạn",
+        "Nhóm 買出人 luôn có expires_on rỗng (CHECK)",
+        "Sequence mã P-NNNN; cột participation_limit_jpy chỉ dùng cho 売買参加者"
+      ],
+      "depends": [
+        "E01-DB-01"
+      ]
+    },
+    {
+      "key": "E01-DB-03",
+      "type": "db",
+      "title": "Migration PAU: lịch sử trạng thái, gỡ tạm dừng 条件付き, hồ sơ 再審査 và RLS",
+      "goal": "Tạo 3 bảng ghi vết và bật RLS chỉ đọc cho 5 bảng participant.",
+      "specs": [
+        "PAU_DB §4.4, §4.5, §4.6, §5",
+        "ADR-004 R8",
+        "ADR-002"
+      ],
+      "dod": [
+        "participant_status_history và participant_condition_releases chỉ thêm (trigger chặn sửa, xóa)",
+        "participant_reviews tạo xong, có cột loại khởi phát; chỉ một hồ sơ đang mở cho mỗi participant (chỉ mục duy nhất một phần)",
+        "RLS bật; chỉ policy SELECT; ROLE-003 và ROLE-005 đọc 5 bảng participant",
+        "Kiểm thử: tài khoản sai role đọc 0 dòng; không thể ghi trực tiếp bằng client"
+      ],
+      "depends": [
+        "E01-DB-02"
+      ],
+      "special": "許可/承認 (条件付き, 再審査)"
+    },
+    {
+      "key": "E01-BE-01",
+      "type": "be",
+      "special": "許可/承認",
+      "title": "Hàm is_participant_effective (boolean) và view participants_brief",
+      "goal": "Hàm cho biết participant có hiệu lực tại thời điểm gọi; view participants_brief dùng hàm này.",
+      "specs": [
+        "FR-PAU-004 AC1, AC2, AC7",
+        "PAU_PARTICIPANT_ELIGIBILITY_TECH §4.3 #1..#3",
+        "PAU_DB §4.7, §6",
+        "ADR-004 R1, R9"
+      ],
+      "dod": [
+        "Hàm trả boolean = tồn tại căn cứ hiện hành hoặc chờ có valid_from <= hôm nay và (expires_on rỗng hoặc >= hôm nay), với trạng thái hợp lệ",
+        "Nhóm 買出人 (expires_on rỗng) không bao giờ hết hạn theo ngày; valid_from ở tương lai vẫn trả sai",
+        "Mốc ngày lấy từ today_tokyo() lúc gọi; EXECUTE cấp cho authenticated; kiểu trả về giữ boolean để cột effective của view không đổi",
+        "Kiểm thử bảng ca biên: đúng ngày hết hạn (hợp lệ), hôm sau (không), valid_from là hôm nay (hợp lệ), căn cứ chờ vừa tới ngày mà job chưa chuyển giao (hợp lệ), expires_on rỗng",
+        "Tạo view participants_brief sau hàm: id, code, name, group_type, status, expires_on (hạn căn cứ hiện hành), effective; không lộ contact và basis_no; lọc theo has_role của ROLE-001..005 và 007"
+      ],
+      "depends": [
+        "E01-DB-02"
+      ]
+    },
+    {
+      "key": "E01-BE-02",
+      "type": "be",
+      "special": "許可/承認",
+      "title": "Hàm check_participant_for_action (nhóm × thao tác) cho lot, 相対取引, せり",
+      "goal": "Một hàm duy nhất để RPC giao dịch và lot hỏi participant có được làm thao tác X không.",
+      "specs": [
+        "PAU_PARTICIPANT_ELIGIBILITY_TECH §4.1, §4.2, §4.4",
+        "ADR-004 R7",
+        "FR-PAU-004 AC5"
+      ],
+      "dod": [
+        "p_action nhận lot_supply, negotiated_buy, auction_win; giá trị khác thì báo lỗi lập trình",
+        "Hợp lệ thì trả {ok:true, group_type}; sai nhóm trả PARTICIPANT_GROUP_NOT_ALLOWED (kiểm nhóm trước trạng thái)",
+        "Không hợp lệ trả PARTICIPANT_INEFFECTIVE, params phân biệt: suspended, under_review, expired (kể cả hết hạn theo ngày dù job chưa ghi), not_yet_effective",
+        "Hàm chỉ đọc, không bao giờ ghi trạng thái; thu quyền thực thi khỏi anon và authenticated",
+        "Kiểm thử theo bảng quyết định thao tác × nhóm × trạng thái ở TECH §4.4, mỗi dòng bảng một ca",
+        "p95 không quá 2 giây, đo bằng script tải trên môi trường kiểm thử; báo cáo ghi số participant và mức đồng thời"
+      ],
+      "depends": [
+        "E01-BE-01"
+      ]
+    },
+    {
+      "key": "E01-BE-03",
+      "type": "be",
+      "title": "Đăng nhập: PAU_LOGIN và rpc_login_attempt_record (khóa 5 lần, 15 phút)",
+      "goal": "Route đăng nhập phía server đếm lần sai theo tài khoản, khóa tạm và mở khóa đúng hạn.",
+      "specs": [
+        "FR-PAU-001 AC1..AC4",
+        "ADR-011 R2..R4",
+        "PAU_LOGIN_SPEC",
+        "PAU_DB §5 (rpc_login_attempt_record)",
+        "Q11 (đã chốt)"
+      ],
+      "dod": [
+        "Đúng email và mật khẩu thì có phiên, đúng role, vào trang chủ theo role",
+        "Sai thì một thông báo chung, không lộ tài khoản có tồn tại hay đang khóa; tài khoản vô hiệu trả ACCOUNT_DISABLED",
+        "Sai 5 lần liên tiếp thì khóa 15 phút, tự mở đúng sau 15 phút; đăng nhập đúng thì bộ đếm về 0; các số 5, 15 là cấu hình",
+        "Khi chạm ngưỡng khóa: ghi ops_alerts account_temp_locked và nhật ký account.temp_lock (actor system), mỗi lần khóa đúng một bản ghi mỗi loại",
+        "Giữ giới hạn tần suất theo IP của Auth (cấu hình, không tự viết lại)",
+        "rpc_login_attempt_record chỉ chạy bằng service role"
+      ],
+      "depends": [
+        "E01-DB-01",
+        "E10-AUD-02",
+        "E01-DOC-01a",
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03"
+      ]
+    },
+    {
+      "key": "E01-BE-04",
+      "type": "be",
+      "title": "Hết phiên 30 phút ở proxy và PAU_LOGOUT",
+      "goal": "Đăng xuất tự động khi không thao tác 30 phút; đăng xuất chủ động.",
+      "specs": [
+        "FR-PAU-001 AC5",
+        "ADR-011 R5",
+        "PAU_LOGIN_SPEC"
+      ],
+      "dod": [
+        "Proxy cập nhật last_activity_at mỗi request hợp lệ",
+        "Quá 30 phút không thao tác thì phiên bị hủy, chuyển về trang đăng nhập",
+        "PAU_LOGOUT gọi signOut; việc hỏi xác nhận khi còn hàng đợi offline do giao diện làm, không đổi API",
+        "Kiểm thử bằng đồng hồ giả: 29 phút còn phiên, 31 phút mất phiên"
+      ],
+      "depends": [
+        "E01-BE-03",
+        "E01-DOC-01a"
+      ]
+    },
+    {
+      "key": "E01-BE-05",
+      "type": "be",
+      "special": "MFA",
+      "title": "MFA TOTP: PAU_MFA_ENROLL và PAU_MFA_VERIFY",
+      "goal": "Đăng ký và xác thực mã 6 chữ số; sau lần sai thứ 3 hủy challenge (giả định theo PAU_LOGIN_SPEC A3, xem chỗ hở S01).",
+      "specs": [
+        "FR-PAU-006 AC1, AC2, AC4",
+        "ADR-010 R1, R2, R6",
+        "PAU_LOGIN_SPEC A3, OQ-2"
+      ],
+      "dod": [
+        "Enroll TOTP; tài khoản đã có factor thì báo CONFLICT",
+        "Verify đếm sai phía server theo challenge; sau lần sai thứ 3 hủy challenge, trả MFA_ATTEMPTS_EXCEEDED (429)",
+        "Sau khi hủy: đăng xuất phiên aal1, buộc nhập lại mật khẩu (theo PAU_LOGIN_SPEC A3; OQ-2 còn mở, giả định ghi ở PREMISE); lần nhập mật khẩu sai kế tiếp vẫn tính vào bộ đếm 5 lần",
+        "ROLE-001..004 được tự bật nhưng không bắt buộc",
+        "Mã sai trả MFA_CODE_INVALID, không lộ thêm thông tin"
+      ],
+      "depends": [
+        "E01-BE-03",
+        "E01-DOC-01a"
+      ]
+    },
+    {
+      "key": "E01-BE-06",
+      "type": "be",
+      "special": "MFA",
+      "title": "Chặn theo mức xác thực aal2 cho ROLE-005/006/007 (proxy và get_my_role)",
+      "goal": "Role bắt buộc MFA mà chưa đạt aal2 thì không vào được trang, API và không đọc được dữ liệu.",
+      "specs": [
+        "FR-PAU-006 AC3",
+        "ADR-010 R3, R4, R5",
+        "PAU_DB §6 (get_my_role, has_role)"
+      ],
+      "dod": [
+        "get_my_role trả null khi role bắt buộc mà aal khác aal2, nên RLS đọc trả 0 dòng",
+        "Proxy chặn trang và API; role bắt buộc chưa có TOTP bị dẫn vào bước đăng ký",
+        "Đổi role sang ROLE-005/006/007 thì yêu cầu aal2 có hiệu lực ngay ở request kế tiếp",
+        "Kiểm thử: role bắt buộc với aal1 bị MFA_REQUIRED trước, sau đó mới tới FORBIDDEN"
+      ],
+      "depends": [
+        "E01-BE-05",
+        "E10-DB-02",
+        "E01-DOC-01a"
+      ]
+    },
+    {
+      "key": "E01-BE-07",
+      "type": "be",
+      "title": "PAU_ACCOUNT_LIST và PAU_ACCOUNT_GET (đọc tài khoản, lịch sử quyền)",
+      "goal": "ROLE-007 xem danh sách, chi tiết, lịch sử đổi quyền và trạng thái MFA.",
+      "specs": [
+        "FR-PAU-002 AC5",
+        "PAU_ACCOUNT_LIST_SPEC",
+        "PAU_ACCOUNT_DETAIL_SPEC",
+        "api-list PAU_ACCOUNT_*"
+      ],
+      "dod": [
+        "Danh sách có lọc, tìm theo email và mã nhân viên, phân trang",
+        "Chi tiết có lịch sử ai, khi nào, trước-sau từ nhật ký kiểm toán",
+        "mfa_enrolled lấy từ factor đã verified, đọc ở route bằng Auth admin",
+        "Chỉ ROLE-007 có aal2; role khác bị FORBIDDEN"
+      ],
+      "depends": [
+        "E01-DB-01",
+        "E01-BE-06",
+        "E01-DOC-01a"
+      ]
+    },
+    {
+      "key": "E01-BE-08",
+      "type": "be",
+      "title": "PAU_ACCOUNT_CREATE: tạo tài khoản (Auth admin và profile, có bù trừ)",
+      "goal": "ROLE-007 tạo tài khoản mới đúng role; lỗi ở bước sau thì xóa user đã tạo.",
+      "specs": [
+        "FR-PAU-002 AC1",
+        "ADR-011 R1",
+        "PAU_ACCOUNT_DETAIL_SPEC"
+      ],
+      "dod": [
+        "Email và mã nhân viên chưa tồn tại thì tạo tài khoản active đúng role",
+        "Trùng email hoặc mã nhân viên thì CONFLICT",
+        "Lỗi ở rpc_account_create_profile thì xóa user vừa tạo (bù trừ), không để tài khoản mồ côi",
+        "Ghi nhật ký kiểm toán cùng giao dịch"
+      ],
+      "depends": [
+        "E01-DB-01",
+        "E01-BE-06",
+        "E01-DOC-01a"
+      ]
+    },
+    {
+      "key": "E01-BE-09",
+      "type": "be",
+      "parent_of": [
+        "E01-BE-09a",
+        "E01-BE-09b",
+        "E01-BE-09c"
+      ],
+      "title": "PAU_ACCOUNT_ACTION: tạm dừng, mở lại, mở khóa sớm, đổi role, gỡ MFA",
+      "goal": "Một RPC rpc_account_action với 5 hành động, chia 3 sub-issue theo mức độ rủi ro.",
+      "specs": [
+        "FR-PAU-002 AC2..AC5",
+        "ADR-010 R5, R7",
+        "PAU_ACCOUNT_DETAIL_SPEC"
+      ],
+      "dod": [
+        "Hoàn thành khi 3 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E01-BE-09a",
+      "type": "be",
+      "parent": "E01-BE-09",
+      "title": "Account action: tạm dừng, mở lại và mở khóa sớm",
+      "goal": "Ba hành động trạng thái tài khoản, có lý do và lịch sử.",
+      "specs": [
+        "FR-PAU-002 AC2, AC3, AC4",
+        "PAU_ACCOUNT_DETAIL_SPEC A5, E8"
+      ],
+      "dod": [
+        "Tạm dừng bắt buộc lý do",
+        "Mở khóa sớm chỉ cho tài khoản khóa tạm; bộ đếm sai về 0",
+        "ROLE-007 tự thao tác trên tài khoản của chính mình thì bị từ chối",
+        "Tạm dừng làm hệ thống không còn ROLE-007 active: server khóa mọi dòng ROLE-007 và trả LAST_ADMIN_PROTECTED (409), không ghi gì",
+        "Hai quản trị viên cùng lúc tạm dừng nhau: đúng một thao tác thành công, thao tác kia nhận LAST_ADMIN_PROTECTED (kiểm thử hai phiên)",
+        "Mỗi thao tác có lịch sử ai, khi nào, trước-sau"
+      ],
+      "depends": [
+        "E01-BE-07",
+        "E01-DOC-01a"
+      ]
+    },
+    {
+      "key": "E01-BE-09b",
+      "type": "be",
+      "parent": "E01-BE-09",
+      "special": "MFA",
+      "title": "Account action: đổi role",
+      "goal": "Đổi role kèm hiệu lực MFA ngay ở request kế tiếp.",
+      "specs": [
+        "FR-PAU-002",
+        "FR-PAU-006 AC3",
+        "ADR-010 R5",
+        "PAU_ACCOUNT_DETAIL_SPEC A5, E8"
+      ],
+      "dod": [
+        "Đổi role ghi nhật ký kiểm toán trước-sau; không cho ROLE-007 tự đổi role của chính mình",
+        "Đổi sang ROLE-005/006/007 thì yêu cầu aal2 có hiệu lực ở request kế tiếp",
+        "Đổi role làm hệ thống không còn ROLE-007 active: khóa mọi dòng ROLE-007, trả LAST_ADMIN_PROTECTED (409), không ghi gì",
+        "Hai quản trị viên cùng lúc đổi role của nhau: đúng một thao tác thành công (kiểm thử hai phiên)"
+      ],
+      "depends": [
+        "E01-BE-06",
+        "E01-BE-07",
+        "E01-DOC-01a"
+      ]
+    },
+    {
+      "key": "E01-BE-09c",
+      "type": "be",
+      "parent": "E01-BE-09",
+      "special": "MFA",
+      "title": "Account action: gỡ MFA (reset_mfa) khi mất thiết bị",
+      "goal": "ROLE-007 khác gỡ factor của người mất thiết bị, bắt lý do, phát thông báo Critical.",
+      "specs": [
+        "ADR-010 R7",
+        "ADR-007 (outbox)",
+        "PAU_ACCOUNT_DETAIL_SPEC"
+      ],
+      "dod": [
+        "Gỡ factor bằng Auth admin; bắt buộc lý do",
+        "Người thực hiện phải khác người bị gỡ",
+        "Ghi nhật ký kiểm toán và đẩy thông báo Critical qua outbox",
+        "Người bị gỡ phải đăng ký lại TOTP ở lần đăng nhập kế",
+        "Ghi chú rủi ro: ROLE-007 duy nhất mất thiết bị chưa có quy trình khôi phục (xem chỗ hở)"
+      ],
+      "depends": [
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03",
+        "E08-BE-08b",
+        "E08-BE-08c",
+        "E01-BE-07",
+        "E01-DOC-01a"
+      ]
+    },
+    {
+      "key": "E01-BE-10",
+      "type": "be",
+      "title": "PAU_PARTICIPANT_LIST và PAU_PARTICIPANT_GET (đọc participant)",
+      "goal": "Danh sách có lọc theo nhóm và theo thao tác được phép; chi tiết kèm căn cứ, lịch sử, tệp chứng cứ.",
+      "specs": [
+        "FR-PAU-003 AC5",
+        "PAU_PARTICIPANT_LIST_SPEC E-5",
+        "api-list PAU_PARTICIPANT_LIST, PAU_PARTICIPANT_GET",
+        "PAU_DB §4.7"
+      ],
+      "dod": [
+        "Nguồn đọc theo role: ROLE-003 đọc participants cùng căn cứ hiện hành và chờ (thêm loại và số căn cứ, hạn mức); ROLE-001, 002, 004, 005, 007 đọc participants_brief; ROLE-001 bị ép chỉ thấy nhóm 卸売業者 ở route",
+        "Lọc q, group (nhiều giá trị), status, eligible=negotiated hoặc auction; phân trang cursor",
+        "items gồm id, code, name, group_type, status, effective, expires_on, expiring_soon; expires_on là hạn hiệu dụng (lớn nhất của căn cứ hiện hành và chờ); expiring_soon dùng ngưỡng cảnh báo, ngưỡng rỗng thì false",
+        "counts (all, valid, suspended, expired, under_review) theo bộ lọc nhóm và q, bỏ qua status",
+        "Role đọc qua view cũng nhận hạn hiệu dụng: chọn cách lấy (view hiện chỉ có hạn căn cứ hiện hành) và kiểm thử ca có căn cứ chờ; xem chỗ hở S06",
+        "Chi tiết (GET): căn cứ, lịch sử trạng thái, gỡ 条件付き, 再審査, tệp chứng cứ qua URL ký tạm; ROLE-005 chỉ đọc"
+      ],
+      "depends": [
+        "E01-DB-03",
+        "E01-BE-01",
+        "E08-DB-01",
+        "E01-DOC-01b"
+      ]
+    },
+    {
+      "key": "E01-BE-11",
+      "type": "be",
+      "title": "PAU_PARTICIPANT_CREATE: tạo hồ sơ 4 nhóm kèm căn cứ",
+      "goal": "Lưu hồ sơ participant đúng nhóm, căn cứ theo nhóm, mã P-NNNN.",
+      "specs": [
+        "FR-PAU-003 AC1..AC4",
+        "FR-PAU-008",
+        "ADR-004 R1",
+        "Q19",
+        "api-list PAU_PARTICIPANT_CREATE",
+        "PAU_PARTICIPANT_PROFILE_FORM_SPEC OQ-3"
+      ],
+      "dod": [
+        "Nhóm xác định lúc tạo, không đổi được",
+        "仲卸 bắt buộc số 許可 và ngày hết hạn; 売買参加者 bắt buộc số 承認 và ngày hết hạn; ngày hết hạn ở tương lai",
+        "卸売業者 và 買出人 không có ngày hết hạn",
+        "Nhận participationLimitJpy tùy chọn: chỉ 売買参加者, nhóm khác gửi giá trị thì VALIDATION fields.participationLimitJpy; lưu cùng giao dịch với hồ sơ và căn cứ; bỏ trống là chưa đặt",
+        "Sinh mã P-NNNN; nhật ký participant.register mang giá trị hạn mức; ghi lịch sử register",
+        "Chỉ ROLE-003 tạo được"
+      ],
+      "depends": [
+        "E01-DB-02",
+        "E01-DOC-01b",
+        "E01-DB-03"
+      ],
+      "special": "許可/承認 (căn cứ theo nhóm) và 参加上限"
+    },
+    {
+      "key": "E01-BE-12",
+      "type": "be",
+      "special": "căn cứ chờ (valid_from tương lai)",
+      "parent_of": [
+        "E01-BE-12a",
+        "E01-BE-12b",
+        "E01-BE-12c"
+      ],
+      "title": "PAU_PARTICIPANT_UPDATE: sửa liên hệ và gia hạn (renewBasis)",
+      "goal": "Gia hạn quyết định theo ngày; căn cứ mới có valid_from tương lai thì chờ, căn cứ cũ giữ tới hết hạn.",
+      "specs": [
+        "FR-PAU-004 AC6, AC7",
+        "FR-PAU-007 AC7, AC8",
+        "PAU_PARTICIPANT_ELIGIBILITY_TECH §4.8",
+        "ADR-004 R9"
+      ],
+      "dod": [
+        "Hoàn thành khi 3 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E01-BE-12a",
+      "type": "be",
+      "parent": "E01-BE-12",
+      "title": "Participant update: sửa tên và thông tin liên hệ",
+      "goal": "Sửa tên và liên hệ, không đổi nhóm, có nhật ký kiểm toán.",
+      "specs": [
+        "FR-PAU-003 AC1",
+        "PAU_PARTICIPANT_PROFILE_FORM_SPEC §4.3 UPDATE, §5 I-2"
+      ],
+      "dod": [
+        "Tên (name) bắt buộc, quá dài thì VALIDATION",
+        "Liên hệ (contact): khi sửa không được xóa trống giá trị đang có; hồ sơ cũ có contact rỗng thì được giữ rỗng, không bị chặn khi chỉ sửa tên",
+        "Kiểm thử: sửa tên của hồ sơ có contact cũ rỗng thì thành công; xóa trống contact đang có thì VALIDATION",
+        "Đổi nhóm bị trigger chặn, trả PARTICIPANT_GROUP_IMMUTABLE (422)",
+        "Nhật ký trước-sau; chỉ ROLE-003"
+      ],
+      "depends": [
+        "E01-BE-11",
+        "E01-DOC-01b"
+      ]
+    },
+    {
+      "key": "E01-BE-12b",
+      "type": "be",
+      "parent": "E01-BE-12",
+      "title": "Participant update: gia hạn thẳng cho 仲卸 và 売買参加者 còn hạn",
+      "goal": "Gia hạn quyết định theo ngày, không theo trạng thái đã ghi.",
+      "specs": [
+        "FR-PAU-004 AC6",
+        "TECH §4.8 #1..#3",
+        "PAU_DB §5 (xem chỗ hở S03)"
+      ],
+      "dod": [
+        "売買参加者 gia hạn thẳng khi trạng thái hợp lệ và hạn hiệu dụng (lớn nhất của căn cứ hiện hành và chờ) >= hôm nay; ngược lại REVIEW_REQUIRED (409), không ghi gì",
+        "Căn cứ chờ vừa tới ngày mà job chưa chuyển giao vẫn tính vào hạn hiệu dụng (kiểm thử khoảng 00:00 đến 00:05)",
+        "卸売業者 và 買出人 gia hạn thì VALIDATION",
+        "仲卸: hợp lệ, tạm dừng hoặc hết hạn đều gia hạn được; hết hạn thì về hợp lệ và ghi lịch sử renew; tạm dừng giữ nguyên tạm dừng",
+        "Khóa participants FOR UPDATE, đọc trạng thái và căn cứ trong cùng khóa, tuần tự với job và 再審査"
+      ],
+      "depends": [
+        "E01-BE-12a",
+        "E01-BE-01",
+        "E01-DOC-01b"
+      ],
+      "special": "許可/承認 (gia hạn từ hết hạn)"
+    },
+    {
+      "key": "E01-BE-12c",
+      "type": "be",
+      "parent": "E01-BE-12",
+      "special": "căn cứ chờ (valid_from tương lai)",
+      "title": "Participant update: căn cứ chờ khi valid_from ở tương lai",
+      "goal": "Giữ căn cứ cũ tới hết hạn, căn cứ mới vào trạng thái chờ, không để khoảng trống.",
+      "specs": [
+        "FR-PAU-004 AC7",
+        "FR-PAU-007 AC7, AC8",
+        "TECH §4.8 #3a, #4..#6",
+        "Q80 (đã chốt), Q87, Q88 (mở, giả định)"
+      ],
+      "dod": [
+        "Nhánh (a): căn cứ hiện hành còn phủ hôm nay và valid_from mới > hôm nay thì căn cứ mới ở trạng thái chờ, dòng chờ cũ bị thay; không đổi căn cứ hiện hành, trạng thái, không ghi lịch sử; trả basis_pending=true; nhật ký kèm basis_pending",
+        "Nhánh (a) mà valid_from mới > expires_on hiện hành + 1 ngày thì VALIDATION fields.renewBasis.validFrom, message M_PAU_025, không ghi gì",
+        "Nhánh (b) (valid_from <= hôm nay, hoặc căn cứ hiện hành đã quá hạn hoặc chưa tới hiệu lực): thay ngay, không dùng M_PAU_025; 仲卸 đã hết hạn gia hạn với valid_from tương lai thì về hợp lệ nhưng hàm kiểm trả not_yet_effective tới ngày đó",
+        "Không có thao tác hủy căn cứ chờ (Q87 mở, giả định); gia hạn lại thay căn cứ chờ cũ",
+        "Đây là hàm nội bộ ghi căn cứ mới dùng chung với duyệt 再審査 (E01-BE-18)",
+        "Kiểm thử ca biên: valid_from đúng hôm nay, đúng hạn cũ + 1, hạn cũ + 2, căn cứ cũ đã hết hạn"
+      ],
+      "depends": [
+        "E01-BE-12b",
+        "E01-DOC-01b"
+      ]
+    },
+    {
+      "key": "E01-BE-13",
+      "type": "be",
+      "special": "参加上限",
+      "title": "PAU_PARTICIPANT_SET_LIMIT: đặt và đổi 参加上限",
+      "goal": "Cấu hình hạn mức mua trong ngày cho 売買参加者, ghi nhật ký trước-sau.",
+      "specs": [
+        "FR-PAU-008",
+        "ADR-013 R1, R6",
+        "Q2 (chủ dự án chốt, chờ khách xác nhận)"
+      ],
+      "dod": [
+        "Chỉ 売買参加者 có hạn mức; nhóm khác bị VALIDATION",
+        "Mỗi lần đổi ghi nhật ký trước-sau, người, thời điểm, lý do",
+        "Đổi giữa ngày có hiệu lực cho lần tạo/chốt kế tiếp, giao dịch đã chốt không đổi",
+        "Chưa đặt hạn mức thì hiểu là không giới hạn (Q2); ROLE-003 đặt hoặc đổi, không cần ROLE-005 duyệt"
+      ],
+      "depends": [
+        "E01-DB-02",
+        "E01-DOC-01b"
+      ]
+    },
+    {
+      "key": "E01-BE-14",
+      "type": "be",
+      "title": "PAU_PARTICIPANT_SUSPEND: tạm dừng participant (cả 4 nhóm)",
+      "goal": "Tạm dừng thủ công kèm lý do, ghi lịch sử và nhật ký.",
+      "specs": [
+        "FR-PAU-004 AC3, AC4",
+        "ADR-004 R8",
+        "TECH §4.5"
+      ],
+      "dod": [
+        "Chỉ chuyển từ hợp lệ; lý do bắt buộc",
+        "Khóa participants FOR UPDATE: tạm dừng và giao dịch song song nối đuôi nhau",
+        "Ghi lịch sử chuyển trạng thái và nhật ký (khóa nhật ký lấy cuối)",
+        "Participant đang tạm dừng không bị job tự chuyển hết hạn"
+      ],
+      "depends": [
+        "E01-DB-03",
+        "E01-DOC-01c"
+      ]
+    },
+    {
+      "key": "E01-BE-15",
+      "type": "be",
+      "special": "許可/承認",
+      "title": "PAU_PARTICIPANT_RELEASE: gỡ tạm dừng 卸売業者 (承認) và 買出人 (ghi chú)",
+      "goal": "Hai nhóm gỡ tạm dừng theo quy tắc riêng.",
+      "specs": [
+        "FR-PAU-007 AC3",
+        "ADR-004 R2, R5",
+        "TECH §4.5"
+      ],
+      "dod": [
+        "Chỉ từ trạng thái tạm dừng",
+        "卸売業者: ghi lịch sử release_approval, người duyệt ROLE-003",
+        "買出人: bắt buộc ghi chú (ràng buộc ở bảng lịch sử)",
+        "Nhóm 仲卸 và 売買参加者 bị từ chối ở RPC này"
+      ],
+      "depends": [
+        "E01-BE-14",
+        "E01-DOC-01c"
+      ]
+    },
+    {
+      "key": "E01-BE-16",
+      "type": "be",
+      "special": "許可/承認",
+      "title": "PAU_PARTICIPANT_RELEASE_CONDITIONAL: gỡ tạm dừng 仲卸 theo 条件付き",
+      "goal": "Chỉ về hợp lệ khi đủ từng điều kiện trong danh mục của 業務規程 đang hiệu lực, mỗi điều kiện có tệp chứng cứ.",
+      "specs": [
+        "FR-PAU-007 AC1, AC6",
+        "ADR-004 R3",
+        "ADR-003",
+        "TECH §4.5 (bảng lỗi, #4)",
+        "Q12 (chủ dự án chốt, chờ khách xác nhận)",
+        "Q31 (mở)"
+      ],
+      "dod": [
+        "p_rule_version_id phải là phiên bản market_rule đang active; danh mục điều kiện rỗng hoặc chưa có thì từ chối",
+        "Mỗi điều kiện trong danh mục phải có mặt (code) và satisfied=true và có ít nhất một tệp; tối đa 5 tệp",
+        "Mỗi tệp phải thuộc tập tệp gửi lên, tồn tại trong Storage và do chính người gọi xin URL tải lên",
+        "Vi phạm bất kỳ guard điều kiện hoặc chứng cứ nào ở trên: ghi nhật ký guard.write_blocked, trả CONDITIONAL_RELEASE_REQUIRED với params là mã điều kiện thiếu; không ghi participant_condition_releases, không đổi trạng thái, không ghi lịch sử",
+        "Thành công: ghi từng kết quả điều kiện, lịch sử chuyển trạng thái kèm căn cứ 許可 và lý do, trạng thái về hợp lệ",
+        "Chỉ nhóm 仲卸 và chỉ từ trạng thái tạm dừng (nhóm khác VALIDATION, trạng thái khác INVALID_STATE)",
+        "Kiểm thử mỗi guard bằng một ca từ chối riêng"
+      ],
+      "depends": [
+        "E01-BE-14",
+        "E10-DB-05",
+        "E10-SYS-02",
+        "E01-DOC-01c"
+      ]
+    },
+    {
+      "key": "E01-BE-17",
+      "type": "be",
+      "special": "許可/承認",
+      "title": "PAU_PARTICIPANT_REVIEW_APPLY: nộp hồ sơ 再審査 cho 売買参加者",
+      "goal": "売買参加者 tạm dừng hoặc hết hạn thì đi 再審査, không gỡ trực tiếp.",
+      "specs": [
+        "FR-PAU-007 AC2, AC4, AC7",
+        "ADR-004 R4, R6",
+        "TECH §4.6"
+      ],
+      "dod": [
+        "ROLE-003 nộp, kèm ghi chú đơn; participant chuyển sang under_review",
+        "Chỉ nộp được khi đang tạm dừng, đã hết hạn, hoặc còn hợp lệ nhưng mọi căn cứ đã quá hạn theo ngày (job chưa ghi); mỗi participant chỉ có một hồ sơ đang mở",
+        "Loại khởi phát suy từ trạng thái và ngày, không chờ job",
+        "Participant under_review bị check_participant_for_action trả không hợp lệ",
+        "Nhóm không phải 売買参加者 bị VALIDATION; ghi participant_reviews, lịch sử và nhật ký; không phát outbox"
+      ],
+      "depends": [
+        "E01-BE-14",
+        "E01-DOC-01c"
+      ]
+    },
+    {
+      "key": "E01-BE-18",
+      "type": "be",
+      "special": "許可/承認",
+      "title": "PAU_PARTICIPANT_REVIEW_DECIDE: duyệt hoặc bác 再審査 (ROLE-005)",
+      "goal": "ROLE-005 duyệt hoặc bác; duyệt thì về hợp lệ (ghi căn cứ mới nếu cần); bác thì về tạm dừng nếu khởi từ tạm dừng, về hết hạn nếu khởi từ hết hạn, kể cả hồ sơ còn ghi hợp lệ nhưng đã quá hạn theo ngày.",
+      "specs": [
+        "FR-PAU-007 AC2, AC8",
+        "ADR-004 R4",
+        "TECH §4.6 (bảng lỗi, #3, #4, #6)",
+        "PAU_PARTICIPANT_VALIDITY_SPEC M-7",
+        "Q13, Q28 (chủ dự án chốt, chờ khách xác nhận)"
+      ],
+      "dod": [
+        "ROLE-005 duyệt; kiểm aal2 trước role (MFA_REQUIRED trước FORBIDDEN); người duyệt khác người nộp (SELF_APPROVAL_FORBIDDEN là lưới an toàn)",
+        "Duyệt: p_new_basis bắt buộc khi loại khởi phát là hết hạn hoặc mọi căn cứ hiện hành và chờ đã quá hạn, ngược lại tùy chọn; thiếu khi bắt buộc thì VALIDATION và không ghi gì; expires_on phải sau hôm nay và không nhỏ hơn valid_from",
+        "Duyệt có căn cứ mới: dùng cùng hàm nội bộ với gia hạn (E01-BE-12c); M_PAU_025 chỉ khi căn cứ hiện hành còn phủ hôm nay và valid_from mới lớn hơn hạn cũ cộng 1 ngày",
+        "Duyệt khởi từ hết hạn với valid_from tương lai: về hợp lệ, hàm kiểm trả not_yet_effective tới ngày đó",
+        "Bác: bắt buộc ghi chú; về tạm dừng nếu khởi từ tạm dừng, về hết hạn nếu khởi từ hết hạn (Q28), kể cả hồ sơ nộp từ trạng thái hợp lệ nhưng đã quá hạn theo ngày thì về hết hạn, không trở về hợp lệ; đây là cạnh review_reject, khác cạnh expire của job",
+        "Ghi lịch sử review_approve hoặc review_reject và nhật ký; không phát outbox"
+      ],
+      "depends": [
+        "E01-BE-17",
+        "E01-BE-12c",
+        "E01-DOC-01c"
+      ]
+    },
+    {
+      "key": "E01-BE-19",
+      "type": "be",
+      "title": "PAU_EXPIRY_WARNING_LIST: danh sách participant sắp hết hiệu lực",
+      "goal": "Liệt kê 仲卸 và 売買参加者 hợp lệ có hạn hiệu dụng trong ngưỡng cảnh báo.",
+      "specs": [
+        "FR-PAU-005 AC1..AC4",
+        "PAU_PARTICIPANT_EXPIRY_WARNING_SPEC"
+      ],
+      "dod": [
+        "Chỉ 仲卸 và 売買参加者 trạng thái hợp lệ có hạn hiệu dụng (lớn nhất của căn cứ hiện hành và chờ) từ hôm nay tới hôm nay + ngưỡng ngày",
+        "Trả counts (all, intermediate, licensed_buyer), threshold_days, generated_at; phân trang cursor",
+        "Chưa cấu hình ngưỡng: trả threshold_missing=true và không có danh sách (cảnh báo vận hành do job ghi)",
+        "Ra khỏi ngưỡng thì biến khỏi danh sách; 買出人 không có hạn nên không bao giờ vào danh sách",
+        "Là nguồn dữ liệu cho báo cáo RPT-03"
+      ],
+      "depends": [
+        "E01-DB-02",
+        "E08-DB-01",
+        "E01-DOC-01c"
+      ]
+    },
+    {
+      "key": "E01-JOB-01",
+      "type": "job",
+      "special": "失効 và căn cứ chờ",
+      "parent_of": [
+        "E01-JOB-01a",
+        "E01-JOB-01b"
+      ],
+      "title": "PAU_JOB_EXPIRE: job hằng ngày chuyển giao căn cứ chờ và ghi 失効",
+      "goal": "Job hằng ngày chuyển giao căn cứ chờ và ghi hết hạn; job là nơi duy nhất ghi cạnh expire (ngoại lệ có chủ đích: bác 再審査 ghi hết hạn qua cạnh review_reject ở E01-BE-18); chạy lại an toàn.",
+      "specs": [
+        "FR-PAU-004 AC2, AC4",
+        "ADR-004 R6, R9",
+        "TECH §4.7"
+      ],
+      "dod": [
+        "Hoàn thành khi 2 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E01-JOB-01a",
+      "type": "job",
+      "parent": "E01-JOB-01",
+      "special": "căn cứ chờ (valid_from tương lai)",
+      "title": "Job expire, bước 1: chuyển giao căn cứ chờ tới ngày",
+      "goal": "Căn cứ chờ có valid_from tới hạn thì thành căn cứ hiện hành, căn cứ cũ ghi superseded_at.",
+      "specs": [
+        "TECH §4.7 bước 1 (#1)",
+        "Q80 (đã chốt)"
+      ],
+      "dod": [
+        "Chọn căn cứ chờ có valid_from <= hôm nay, theo lô tối đa 500, khóa participants FOR UPDATE SKIP LOCKED",
+        "Cập nhật dòng hiện hành cũ trước (is_current=false, superseded_at), rồi dòng chờ thành hiện hành (giữ chỉ mục duy nhất)",
+        "Không đổi participants.status; không ghi lịch sử trạng thái và nhật ký kiểm toán (đây không phải chuyển trạng thái, việc gia hạn đã ghi nhật ký lúc nhập)",
+        "Ghi log INFO participant.basis_activate done kèm số dòng; lượt lỗi rollback, lượt sau chạy lại; hàng bị SKIP LOCKED xử lý ở lượt sau",
+        "Chạy lại nhiều lần không tạo dữ liệu trùng; giờ chạy là tham số cấu hình (giả định 00:05 JST, ghi ở PREMISE)",
+        "Kiểm thử: số dòng mới trong participant_status_history và audit_logs do chính lượt chạy bước 1 sinh ra là 0"
+      ],
+      "depends": [
+        "E01-BE-12c",
+        "E01-DOC-01c"
+      ]
+    },
+    {
+      "key": "E01-JOB-01b",
+      "type": "job",
+      "parent": "E01-JOB-01",
+      "special": "失効",
+      "title": "Job expire, bước 2: ghi 失効 cho 仲卸 và 売買参加者 quá hạn",
+      "goal": "Chuyển participant hợp lệ nhưng mọi căn cứ đã quá hạn sang hết hạn.",
+      "specs": [
+        "TECH §4.7 bước 2",
+        "ADR-004 R6"
+      ],
+      "dod": [
+        "Chọn participant trạng thái hợp lệ, nhóm 仲卸 hoặc 売買参加者, mọi căn cứ đã quá hạn và không có căn cứ chờ; lô tối đa 500, SKIP LOCKED",
+        "Ghi hết hạn; lịch sử expire (người thực hiện rỗng); nhật ký participant.expire (actor system); khóa nhật ký lấy cuối",
+        "Không ghi đè participant đang tạm dừng; chạy sau bước 1 trong cùng lượt; idempotent; log INFO participant.expire done kèm số dòng",
+        "Job là nơi duy nhất ghi cạnh expire; RPC giao dịch không ghi trạng thái hết hạn (kiểm thử khẳng định). Ngoại lệ có chủ đích: bác 再審査 khởi từ hết hạn có thể ghi hết hạn qua cạnh review_reject (E01-BE-18), đó không phải cạnh expire"
+      ],
+      "depends": [
+        "E01-JOB-01a",
+        "E01-DOC-01c"
+      ]
+    },
+    {
+      "key": "E01-JOB-02",
+      "type": "job",
+      "title": "PAU_JOB_EXPIRY_WARNING: job gửi sự kiện participant sắp hết hạn",
+      "goal": "Theo giờ gửi cấu hình, phát sự kiện qua outbox cho participant trong ngưỡng.",
+      "specs": [
+        "FR-PAU-005 AC1, AC3",
+        "ADR-007"
+      ],
+      "dod": [
+        "Ghi outbox sự kiện participant_expiring theo hạn hiệu dụng (lớn nhất của căn cứ hiện hành và chờ); participant có căn cứ chờ phủ tiếp chỉ bị cảnh báo khi hạn hiệu dụng đó nằm trong ngưỡng",
+        "Chưa cấu hình ngưỡng: không phát sự kiện, ghi ops_alerts expiry_threshold_missing cho ROLE-007",
+        "Cùng quy tắc phạm vi với E01-BE-19; giờ gửi theo cấu hình"
+      ],
+      "depends": [
+        "E01-BE-19",
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03",
+        "E01-DOC-01c"
+      ]
+    },
+    {
+      "key": "E01-FE-01",
+      "type": "fe",
+      "special": "MFA",
+      "parent_of": [
+        "E01-FE-01a",
+        "E01-FE-01b",
+        "E01-FE-01c"
+      ],
+      "title": "S-001 PAU_LOGIN: đăng nhập, MFA và trang chủ theo role",
+      "goal": "Màn đăng nhập và trang chủ, 6 trạng thái: normal, error, disabled, mfa-verify, mfa-enroll, home.",
+      "specs": [
+        "PAU_LOGIN_SPEC",
+        "FR-PAU-001",
+        "FR-PAU-006"
+      ],
+      "dod": [
+        "Hoàn thành khi 3 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E01-FE-01a",
+      "type": "fe",
+      "parent": "E01-FE-01",
+      "title": "S-001a: form đăng nhập, lỗi chung và trạng thái khóa",
+      "goal": "Form email và mật khẩu; trạng thái normal, error, disabled.",
+      "specs": [
+        "PAU_LOGIN_SPEC (trạng thái lỗi, khóa)",
+        "ADR-011 R4"
+      ],
+      "dod": [
+        "Lỗi chung M_PAU_001 không lộ tài khoản có tồn tại hay đang khóa; khóa tạm hiển thị cùng lỗi chung",
+        "Tài khoản vô hiệu (trạng thái disabled) hiển thị M_PAU_002 theo spec",
+        "Thông báo cần đọc kỹ dùng kiểu banner; dùng được hoàn toàn bằng bàn phím"
+      ],
+      "depends": [
+        "E01-BE-03"
+      ]
+    },
+    {
+      "key": "E01-FE-01b",
+      "type": "fe",
+      "parent": "E01-FE-01",
+      "special": "MFA",
+      "title": "S-001b: đăng ký và nhập mã MFA, ép đăng ký TOTP cho role bắt buộc",
+      "goal": "Luồng đăng ký TOTP và nhập mã 6 chữ số.",
+      "specs": [
+        "PAU_LOGIN_SPEC (MFA)",
+        "ADR-010 R3, R6"
+      ],
+      "dod": [
+        "Role bắt buộc chưa có TOTP bị dẫn vào bước đăng ký (trạng thái mfa-enroll), không vào được trang khác",
+        "Nhập sai mã (trạng thái mfa-verify): hiển thị lỗi; sau lần sai thứ 3 nhận MFA_ATTEMPTS_EXCEEDED, quay về bước mật khẩu, xóa mọi ô, hiển thị M_PAU_004 (theo A3, giả định)",
+        "Role không bắt buộc có tùy chọn tự bật"
+      ],
+      "depends": [
+        "E01-BE-05",
+        "E01-FE-01a"
+      ]
+    },
+    {
+      "key": "E01-FE-01c",
+      "type": "fe",
+      "parent": "E01-FE-01",
+      "title": "S-001c: trang chủ theo role, khối việc cần làm và hộp thông báo",
+      "goal": "Sau đăng nhập vào trang chủ đúng role, có khối việc cần làm gồm số đếm theo role và hộp thông báo.",
+      "specs": [
+        "PAU_LOGIN_SPEC H-2, §4.3, §6 (bảng Khối H-2)",
+        "P14 (không thêm màn mới)",
+        "api-list NTF_INBOX_LIST, NTF_INBOX_MARK_READ",
+        "Q89 (mở, giả định)"
+      ],
+      "dod": [
+        "Trang chủ có thẻ lối vào theo role và khối việc cần làm gồm hai phần; gọi song song SYS_ME, NTF_INBOX_LIST và các GET đếm",
+        "Phần 1, số đếm theo role: mỗi dòng là link sang màn đích; lấy từ GET sẵn có (counts, total, hoặc đếm limit=100 và hiển thị 100+ khi còn next_cursor), không thêm API. Ngoại lệ ROLE-001: đếm số bản ghi tiếp nhận chờ đồng bộ từ hàng đợi cục bộ trên thiết bị (ADR-009), link tới LOT_INTAKE_FORM, không có GET",
+        "Một GET đếm lỗi chỉ làm dòng đó hiện — kèm tooltip Không tải được; các dòng khác không ảnh hưởng",
+        "Phần 2, hộp thông báo: 10 thông báo mới nhất, chưa đọc lên đầu, Critical có nhãn ⚠, Xem thêm 10 dòng mỗi lần; rỗng thì M_COM_021; bấm thông báo gọi NTF_INBOX_MARK_READ",
+        "Đăng xuất khi còn hàng đợi offline thì hỏi M_COM_030 trước; khi mất mạng chỉ xóa phiên phía thiết bị (giả định cho Q89, ghi ở PREMISE)"
+      ],
+      "depends": [
+        "E01-FE-01a",
+        "E08-BE-06",
+        "E08-BE-07",
+        "E10-SYS-01",
+        "E01-BE-10",
+        "E01-BE-19",
+        "E03-BE-08",
+        "E07-BE-01",
+        "E02-BE-02",
+        "E04-BE-02",
+        "E05-BE-01",
+        "E06-BE-09",
+        "E08-BE-03",
+        "E02-FE-01"
+      ]
+    },
+    {
+      "key": "E01-FE-02",
+      "type": "fe",
+      "title": "S-002 PAU_ACCOUNT_LIST: danh sách tài khoản",
+      "goal": "Danh sách, lọc, tìm theo email và mã nhân viên cho ROLE-007.",
+      "specs": [
+        "PAU_ACCOUNT_LIST_SPEC (2 trạng thái: normal, empty)",
+        "FR-PAU-002"
+      ],
+      "dod": [
+        "Hai trạng thái theo spec: normal và empty (bộ lọc không có kết quả); đang tải và lỗi theo bảng Event/Error của spec",
+        "Lọc và phân trang khớp API",
+        "Chỉ ROLE-007 truy cập được"
+      ],
+      "depends": [
+        "E01-BE-07"
+      ]
+    },
+    {
+      "key": "E01-FE-03",
+      "type": "fe",
+      "title": "S-003 PAU_ACCOUNT_DETAIL: chi tiết, tạo mới và thao tác tài khoản",
+      "goal": "Màn chi tiết có form tạo, lịch sử quyền và thao tác tạm dừng, mở lại, mở khóa, đổi role, gỡ MFA; 8 trạng thái theo spec.",
+      "specs": [
+        "PAU_ACCOUNT_DETAIL_SPEC (8 trạng thái: normal, locked, disabled, self, suspend-modal, change-role-modal, last-admin, create)",
+        "FR-PAU-002",
+        "FR-PAU-006"
+      ],
+      "dod": [
+        "Form tạo (trạng thái create) kiểm đầu vào theo spec; lỗi trùng hiển thị đúng trường",
+        "Nút thao tác hiện theo trạng thái tài khoản (normal, locked, disabled); trạng thái self khóa các nút thao tác trên chính mình",
+        "Modal tạm dừng bắt lý do; modal đổi role; có hộp xác nhận cho từng thao tác theo spec",
+        "LAST_ADMIN_PROTECTED (trạng thái last-admin): giữ modal, hiển thị M_PAU_011, nút xác nhận vô hiệu cho tới khi đóng; không chặn ở client vì client không biết số ROLE-007 active",
+        "Hiển thị lịch sử ai, khi nào, trước-sau"
+      ],
+      "depends": [
+        "E01-BE-08",
+        "E01-BE-09"
+      ]
+    },
+    {
+      "key": "E01-FE-04",
+      "type": "fe",
+      "title": "S-004 PAU_PARTICIPANT_LIST: danh sách participant",
+      "goal": "Danh sách participant theo nhóm, trạng thái, hạn hiệu lực.",
+      "specs": [
+        "PAU_PARTICIPANT_LIST_SPEC (3 trạng thái: normal, role-005, empty)",
+        "FR-PAU-003"
+      ],
+      "dod": [
+        "Ba trạng thái theo spec: normal (ROLE-003, có nút ghi và cột thao tác), role-005 (chỉ xem, ẩn nút ghi), empty",
+        "Lọc theo nhóm, trạng thái, tìm theo tên hoặc mã P-NNNN; hiển thị counts và phân trang",
+        "Cột hết hạn hiển thị hạn hiệu dụng do API trả (xem chỗ hở S06); hiển thị ngày hiệu lực và trạng thái tạm dừng"
+      ],
+      "depends": [
+        "E01-BE-10"
+      ]
+    },
+    {
+      "key": "E01-FE-05",
+      "type": "fe",
+      "special": "参加上限",
+      "title": "S-005 PAU_PARTICIPANT_PROFILE_FORM: hồ sơ participant và mục 参加上限",
+      "goal": "Form tạo và sửa hồ sơ theo nhóm, gia hạn kèm căn cứ chờ, mục 参加上限; 6 trạng thái theo spec.",
+      "specs": [
+        "PAU_PARTICIPANT_PROFILE_FORM_SPEC (6 trạng thái: normal, error, create-buyer, edit-licensed-buyer, edit-wholesaler, limit-confirm)",
+        "FR-PAU-003",
+        "FR-PAU-008"
+      ],
+      "dod": [
+        "Trường hiển thị theo nhóm; nhóm không đổi được sau khi tạo; ROLE-005 vào chế độ chỉ đọc",
+        "Tạo 売買参加者: ô 参加上限 tùy chọn gửi cùng PAU_PARTICIPANT_CREATE (không gọi SET_LIMIT sau khi tạo)",
+        "Gia hạn: nút Gia hạn lấy khả năng từ cùng quy tắc theo ngày với API; hiển thị trạng thái chờ hiệu lực của căn cứ; hiển thị M_PAU_025 khi khoảng trống căn cứ",
+        "Đổi 参加上限 bắt lý do và có modal xác nhận (limit-confirm); số đã dùng trong ngày lấy từ TRD_LIMIT_USAGE_GET (chỉ ROLE-003 gọi), lỗi API chỉ hiện — và không chặn màn; có ca used_adjustment_jpy khác 0"
+      ],
+      "depends": [
+        "E01-BE-11",
+        "E01-BE-12",
+        "E01-BE-13",
+        "E01-BE-10",
+        "E03-BE-07"
+      ]
+    },
+    {
+      "key": "E01-FE-06",
+      "type": "fe",
+      "special": "許可/承認",
+      "parent_of": [
+        "E01-FE-06a",
+        "E01-FE-06b",
+        "E01-FE-06c"
+      ],
+      "title": "S-006 PAU_PARTICIPANT_VALIDITY: trạng thái hiệu lực participant",
+      "goal": "Màn quản lý tạm dừng và gỡ tạm dừng theo từng nhóm; 5 trạng thái chính: normal, licensed-buyer, suspend-modal, review-decision, empty.",
+      "specs": [
+        "PAU_PARTICIPANT_VALIDITY_SPEC",
+        "FR-PAU-004",
+        "FR-PAU-007",
+        "FR-PAU-008"
+      ],
+      "dod": [
+        "Hoàn thành khi 3 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E01-FE-06a",
+      "type": "fe",
+      "parent": "E01-FE-06",
+      "special": "許可/承認",
+      "title": "S-006a: tạm dừng và gỡ tạm dừng 承認 / ghi chú (卸売業者, 買出人)",
+      "goal": "Thao tác tạm dừng chung và gỡ tạm dừng của hai nhóm đơn giản.",
+      "specs": [
+        "PAU_PARTICIPANT_VALIDITY_SPEC"
+      ],
+      "dod": [
+        "Bảng lọc theo nhóm và trạng thái; chưa chọn participant thì hiển thị trạng thái trống; bộ lọc không kết quả hiển thị empty",
+        "Nhãn hiệu lực hiển thị đúng: chưa tới hiệu lực (not_yet_effective), còn trạng thái hợp lệ nhưng mọi căn cứ đã quá hạn (chờ job), theo bảng nhãn của spec",
+        "Cột Hết hạn hiển thị hạn căn cứ hiện hành theo E-5, căn cứ chờ chưa tính (xem chỗ hở S06)",
+        "Nút hiển thị theo nhóm và trạng thái, không hiện nút sai nhóm; tạm dừng bắt buộc lý do; 買出人 gỡ bắt buộc ghi chú; hiển thị lịch sử chuyển trạng thái"
+      ],
+      "depends": [
+        "E01-BE-14",
+        "E01-BE-15",
+        "E01-BE-10"
+      ]
+    },
+    {
+      "key": "E01-FE-06b",
+      "type": "fe",
+      "parent": "E01-FE-06",
+      "special": "許可/承認",
+      "title": "S-006b: gỡ tạm dừng 条件付き cho 仲卸 kèm tải tệp chứng cứ",
+      "goal": "Danh mục điều kiện, tải tệp cho từng điều kiện, gửi gỡ tạm dừng.",
+      "specs": [
+        "PAU_PARTICIPANT_VALIDITY_SPEC",
+        "FR-PAU-007 AC1, AC6"
+      ],
+      "dod": [
+        "Danh sách điều kiện lấy từ API, mỗi điều kiện có vùng tải tệp",
+        "Thiếu tệp thì hiển thị lỗi theo CONDITIONAL_RELEASE_REQUIRED",
+        "Tải tệp qua URL ký tạm, không lộ đường dẫn lưu trữ"
+      ],
+      "depends": [
+        "E01-BE-16",
+        "E10-SYS-02",
+        "E01-BE-10"
+      ]
+    },
+    {
+      "key": "E01-FE-06c",
+      "type": "fe",
+      "parent": "E01-FE-06",
+      "special": "許可/承認 và 参加上限",
+      "title": "S-006c: 再審査 (nộp, duyệt, bác) và hiển thị 参加上限",
+      "goal": "Luồng 再審査 cho 売買参加者, hiển thị hạn mức và mức đã dùng.",
+      "specs": [
+        "PAU_PARTICIPANT_VALIDITY_SPEC",
+        "FR-PAU-007 AC2, AC8",
+        "FR-PAU-008"
+      ],
+      "dod": [
+        "ROLE-003 nộp hồ sơ 再審査 kèm tải tệp qua URL ký tạm; ROLE-005 duyệt hoặc bác (trạng thái review-decision), nút hiện đúng theo role",
+        "Ô 承認 mới bắt buộc khi loại khởi phát là hết hạn hoặc 承認 đã quá hạn hiệu dụng, ngược lại ẩn kèm chữ không cần (M-7); hiển thị M_PAU_025 khi duyệt gây khoảng trống căn cứ",
+        "Hiển thị hạn mức và mức đã dùng đúng giá trị API TRD_LIMIT_USAGE_GET trả (used_jpy là tổng ba thành phần gồm điều chỉnh); có ca used_adjustment_jpy khác 0 (ví dụ 20 + 70 + 10 = 100); ROLE-005 chỉ đọc"
+      ],
+      "depends": [
+        "E01-BE-17",
+        "E01-BE-18",
+        "E03-BE-07",
+        "E01-BE-10",
+        "E10-SYS-02"
+      ]
+    },
+    {
+      "key": "E01-FE-07",
+      "type": "fe",
+      "title": "S-007 PAU_PARTICIPANT_EXPIRY_WARNING: cảnh báo participant sắp hết hạn",
+      "goal": "Danh sách participant sắp hết hiệu lực, mở được hồ sơ.",
+      "specs": [
+        "PAU_PARTICIPANT_EXPIRY_WARNING_SPEC (3 trạng thái: normal, empty, threshold-missing)",
+        "FR-PAU-005"
+      ],
+      "dod": [
+        "Ba trạng thái theo spec: normal (có danh sách), empty (có ngưỡng nhưng không ai trong ngưỡng), threshold-missing (chưa cấu hình ngưỡng, ẩn banner và danh sách)",
+        "Mở được hồ sơ từ danh sách; ROLE-005 chỉ xem"
+      ],
+      "depends": [
+        "E01-BE-19"
+      ]
+    },
+    {
+      "key": "E01-QA-01",
+      "type": "qa",
+      "special": "MFA",
+      "title": "QA đầu cuối: đăng nhập, khóa 5 lần, hết phiên 30 phút và MFA",
+      "goal": "Kiểm thử luồng xác thực từ trình duyệt thật.",
+      "specs": [
+        "FR-PAU-001",
+        "FR-PAU-006"
+      ],
+      "dod": [
+        "Kịch bản: đúng và sai mật khẩu, 5 lần sai khóa 15 phút, mở sau 15 phút, hết phiên 30 phút",
+        "Kịch bản MFA: đăng ký TOTP; sai 3 lần thì challenge bị hủy, phiên aal1 bị đăng xuất, phải nhập lại mật khẩu (theo A3); role bắt buộc bị chặn khi chưa aal2",
+        "Mỗi ca ghi đầu vào, kết quả mong đợi và tiêu chí đạt; có báo cáo kết quả và lỗi tìm được"
+      ],
+      "depends": [
+        "E01-FE-01",
+        "E01-BE-04",
+        "E01-BE-06"
+      ]
+    },
+    {
+      "key": "E01-QA-02",
+      "type": "qa",
+      "special": "許可/承認, 失効 và căn cứ chờ",
+      "title": "QA đầu cuối: vòng đời participant (tạm dừng, gỡ theo nhóm, 再審査, 失効, căn cứ chờ)",
+      "goal": "Kiểm thử vòng đời trạng thái và ca hai phiên chạy song song trên PostgreSQL.",
+      "specs": [
+        "FR-PAU-004",
+        "FR-PAU-007",
+        "TECH §4.1, §4.7, §4.8",
+        "REQ-001 §8.1 #2"
+      ],
+      "dod": [
+        "Kịch bản mỗi nhóm: tạm dừng và gỡ đúng quy tắc nhóm",
+        "Ca hai phiên: tạm dừng và tạo giao dịch cùng lúc nối đuôi nhau, không lọt giao dịch (dùng luồng tạo giao dịch của E-03)",
+        "Ca job: căn cứ chờ chuyển giao đúng ngày; hết hạn ghi đúng; chạy lại không đổi kết quả",
+        "Mỗi ca ghi đầu vào, kết quả mong đợi và tiêu chí đạt; có báo cáo kết quả"
+      ],
+      "depends": [
+        "E01-FE-06",
+        "E01-JOB-01",
+        "E01-BE-18",
+        "E03-BE-02"
+      ]
+    },
+    {
+      "key": "E01-QA-03",
+      "type": "qa",
+      "title": "QA đầu cuối: tài khoản, đổi role và hồ sơ participant",
+      "goal": "Kiểm thử quản lý tài khoản, quyền theo role và tạo hồ sơ participant.",
+      "specs": [
+        "FR-PAU-002",
+        "FR-PAU-003",
+        "FR-PAU-008"
+      ],
+      "dod": [
+        "Tạo, tạm dừng, mở khóa, đổi role, gỡ MFA; ROLE-007 tự thao tác bị từ chối",
+        "Đổi role sang ROLE-005 thì request kế tiếp đòi aal2",
+        "Ca hai phiên: đúng 2 tài khoản ROLE-007 active cùng tạm dừng nhau (cả hai đã qua tầng route), đúng một thành công, ca kia nhận LAST_ADMIN_PROTECTED và giao diện giữ modal",
+        "Tạo hồ sơ 4 nhóm, ràng buộc căn cứ theo nhóm, đổi 参加上限 có nhật ký",
+        "Mỗi ca ghi đầu vào, kết quả mong đợi và tiêu chí đạt; có báo cáo kết quả"
+      ],
+      "depends": [
+        "E01-FE-03",
+        "E01-FE-05"
+      ]
+    },
+    {
+      "key": "E01-CLR-01",
+      "type": "clarify",
+      "special": "MFA",
+      "title": "Làm rõ: quy trình khôi phục khi ROLE-007 duy nhất mất thiết bị MFA",
+      "goal": "Chốt cách khôi phục khi không còn ROLE-007 nào khác để gỡ MFA, vì thiết kế hiện chỉ nói 'ngoài hệ thống'.",
+      "specs": [
+        "ADR-010 R7 và mục Rủi ro",
+        "FR-PAU-006"
+      ],
+      "dod": [
+        "Có câu trả lời của khách (hoặc đề xuất được người có thẩm quyền chấp nhận) về cách khôi phục",
+        "Nếu phương án là yêu cầu tối thiểu hai tài khoản ROLE-007 active: ghi thành điều kiện vận hành, giống cách PREMISE LAB-4 P25 làm cho ROLE-005",
+        "Cập nhật ADR-010 hoặc dòng PREMISE tương ứng; báo lại issue E01-BE-09c nếu cần đổi hành vi"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E01-DOC-01",
+      "type": "doc",
+      "parent_of": [
+        "E01-DOC-01a",
+        "E01-DOC-01b",
+        "E01-DOC-01c"
+      ],
+      "title": "Soạn API Design (BM-2-901-52) cho nhóm API participants-auth",
+      "goal": "Soạn tài liệu API Design cho 19 API và 2 job PAU, làm hợp đồng chung cho FE và BE trước khi code.",
+      "specs": [
+        "api-list §2.2 PAU",
+        "api-design/_index (L5)",
+        "BM-2-901-52",
+        "PREMISE (mục Thêm: API Design)"
+      ],
+      "dod": [
+        "Hoàn thành khi 3 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E01-DOC-01a",
+      "type": "doc",
+      "parent": "E01-DOC-01",
+      "title": "API Design: đăng nhập, MFA và tài khoản (8 API)",
+      "goal": "PAU_LOGIN, PAU_LOGOUT, PAU_MFA_ENROLL, PAU_MFA_VERIFY, PAU_ACCOUNT_LIST, CREATE, GET, ACTION.",
+      "specs": [
+        "api-list PAU_LOGIN..PAU_ACCOUNT_ACTION",
+        "PAU_LOGIN_SPEC",
+        "PAU_ACCOUNT_DETAIL_SPEC",
+        "ADR-010",
+        "ADR-011"
+      ],
+      "dod": [
+        "Mỗi API một file {API_ID}_API.md theo mẫu BM-2-901-52, có request, response, quyền, mã lỗi (tra error-codes), link SPEC và TECH liên quan",
+        "Với PAU_ACCOUNT_ACTION: ghi rõ khóa theo id và kiểm người gọi theo A1, guard LAST_ADMIN_PROTECTED chỉ áp cho tạm dừng và đổi role",
+        "Chốt hành vi sau lần sai MFA thứ 3 (ngưỡng và đăng xuất phiên aal1) cho khớp ADR-010, PAU_LOGIN_SPEC A3 (xem chỗ hở S01)",
+        "Khớp api-list; chỗ lệch ghi vào bảng chỗ hở, không tự sửa api-list"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E01-DOC-01b",
+      "type": "doc",
+      "parent": "E01-DOC-01",
+      "title": "API Design: hồ sơ participant và 参加上限 (5 API)",
+      "goal": "PAU_PARTICIPANT_LIST, GET, CREATE, UPDATE, SET_LIMIT.",
+      "specs": [
+        "api-list PAU_PARTICIPANT_LIST..PAU_PARTICIPANT_SET_LIMIT",
+        "PAU_PARTICIPANT_LIST_SPEC",
+        "PAU_PARTICIPANT_PROFILE_FORM_SPEC",
+        "ADR-013"
+      ],
+      "dod": [
+        "Mỗi API một file {API_ID}_API.md theo mẫu BM-2-901-52, có request, response, quyền, mã lỗi, link SPEC và TECH liên quan",
+        "Chốt điều kiện gia hạn thẳng của PAU_PARTICIPANT_UPDATE theo hạn hiệu dụng (TECH §4.8 #2) thay vì căn cứ hiện hành ở PAU_DB §5 (xem chỗ hở S03)",
+        "Chốt nguồn cột Hết hạn: S-004 dùng hạn hiệu dụng, S-006 E-5 dùng hạn căn cứ hiện hành; không dùng một trường cho hai nghĩa; chốt cách role đọc qua view lấy được hạn hiệu dụng (xem chỗ hở S06)",
+        "Dẫn hợp đồng TRD_LIMIT_USAGE_GET đã có (used_pending_jpy, used_confirmed_jpy, used_adjustment_jpy, used_jpy = tổng ba số, ADR-013 R7); ghi cách FE hiển thị chi tiết khi used_adjustment_jpy khác 0 vì PROFILE_FORM A5 và VALIDITY I-3 mới mô tả hai thành phần (xem chỗ hở S04)",
+        "Khớp api-list; chỗ lệch ghi vào bảng chỗ hở"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E01-DOC-01c",
+      "type": "doc",
+      "parent": "E01-DOC-01",
+      "title": "API Design: vòng đời trạng thái participant, cảnh báo và 2 job (8 mục)",
+      "goal": "PAU_PARTICIPANT_SUSPEND, RELEASE, RELEASE_CONDITIONAL, REVIEW_APPLY, REVIEW_DECIDE, PAU_EXPIRY_WARNING_LIST, PAU_JOB_EXPIRE, PAU_JOB_EXPIRY_WARNING.",
+      "specs": [
+        "api-list PAU_PARTICIPANT_SUSPEND..PAU_JOB_EXPIRY_WARNING",
+        "PAU_PARTICIPANT_ELIGIBILITY_TECH",
+        "PAU_PARTICIPANT_VALIDITY_SPEC",
+        "ADR-004"
+      ],
+      "dod": [
+        "Mỗi API một file {API_ID}_API.md theo mẫu BM-2-901-52, có request, response, quyền, mã lỗi, thứ tự khóa, link SPEC và TECH liên quan",
+        "Với job: lịch chạy, tính idempotent, log",
+        "Chốt quy tắc cảnh báo theo hạn hiệu dụng cho PAU_EXPIRY_WARNING_LIST và PAU_JOB_EXPIRY_WARNING (xem chỗ hở S05)",
+        "Khớp api-list và TECH; chỗ lệch ghi vào bảng chỗ hở"
+      ],
+      "depends": []
+    }
+  ]
+}

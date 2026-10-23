@@ -1,0 +1,862 @@
+{
+  "epic": {
+    "key": "E-05",
+    "title": "E-05 Đối soát và chốt sổ (daily-closing)",
+    "goal": "Bảng đối soát ngày, chốt sổ (締め) có chặn khi còn giao dịch pending, 締め再開 hai người duyệt, và hồ sơ tranh chấp (cập nhật được cả ở ngày đã khóa).",
+    "specs": [
+      "FR-CLS-001..004",
+      "design/daily-closing",
+      "CLS_DB",
+      "ADR-005",
+      "ADR-015"
+    ],
+    "out_of_scope": [
+      "Bảng business_days, business_day_locks, day_reopen_requests, trigger chuyển trạng thái ngày, current_business_day, lock_day_open (E-10, CORE_DB)",
+      "Chốt, từ chối, hủy giao dịch pending (E-03)",
+      "Sửa số liệu giao dịch đã chốt (E-04)",
+      "Tính 完納奨励金 và sinh báo cáo sau khóa (E-06, E-09 qua outbox business_day_locked)",
+      "Worker gửi thông báo Critical (E-08)"
+    ]
+  },
+  "issues": [
+    {
+      "key": "E05-DOC-01",
+      "type": "doc",
+      "parent_of": [
+        "E05-DOC-01a",
+        "E05-DOC-01b",
+        "E05-DOC-01c"
+      ],
+      "title": "Soạn API Design (BM-2-901-52) cho nhóm API daily-closing",
+      "goal": "Soạn API Design cho 10 API đối soát, chốt sổ, 締め再開 và tranh chấp, chia 3 sub-issue.",
+      "specs": [
+        "api-list §2.6 CLS",
+        "api-design/_index (L5)",
+        "BM-2-901-52",
+        "PREMISE (mục Thêm: API Design)"
+      ],
+      "dod": [
+        "Hoàn thành khi 3 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E05-DOC-01a",
+      "type": "doc",
+      "title": "API Design: bảng đối soát, danh sách ngày và chốt sổ (3 API)",
+      "goal": "CLS_RECONCILIATION_GET, CLS_DAY_LIST, CLS_DAY_CLOSE.",
+      "specs": [
+        "api-list CLS_RECONCILIATION_GET, CLS_DAY_LIST, CLS_DAY_CLOSE",
+        "CLS_DAY_CLOSE_TECH §4.1, §4.5",
+        "CLS_DAILY_RECONCILIATION_SPEC §4.3, §6 A1",
+        "ADR-015"
+      ],
+      "dod": [
+        "Mỗi API một file {API_ID}_API.md theo mẫu BM-2-901-52: request, response, quyền, mã lỗi, link SPEC và TECH",
+        "Chốt tên khóa của response CLS_DAY_CLOSE (day_id, lock_id, lock_no, closed_at: đề xuất của TECH, DQ-4) và của CLS_RECONCILIATION_GET (selected, summary, pending_trades, items, next_cursor: đề xuất của SPEC §4.3)",
+        "Chốt hợp đồng CLS_RECONCILIATION_GET vì không có TECH riêng cho rpc_reconciliation_overview: quy tắc chọn ngày mặc định (A1: ngày reopened mới nhất, rồi hôm nay open, rồi ngày open mới nhất, rồi ngày mới nhất), bốn giá trị tab (trades, deliveries, exceptions, disputes), tham số status, limit 20, cursor (tab trades theo id tăng dần như SPEC; các tab còn lại theo khóa chốt ở đầu việc keyset bên dưới), các khóa summary kể cả deliveries_total, exceptions_total, disputes_total",
+        "CLS_DAY_LIST: ROLE-005 nhận đủ cột (closed_at, closed_by_name, locks[], pending_request), ROLE-003 chỉ nhận 3 cột đầu (id, business_date, status); status nhận nhiều giá trị phân tách dấu phẩy; limit tối đa 100; sắp business_date giảm dần",
+        "Ghi mã lỗi từng API khớp api-list; đối chiếu chỗ lệch ghi vào bảng chỗ hở",
+        "Chốt hợp đồng payload outbox của business_day_locked và business_day_relocked ({business_day_id, business_date, lock_id, lock_no}) khớp INC_INCENTIVE_CALCULATE_TECH §4.1 và worker báo cáo, kèm dedup_key",
+        "Chốt keyset cho từng tab: SPEC chỉ nêu trades theo id tăng dần; tab deliveries, exceptions, disputes cần khóa sắp xếp riêng và cursor riêng"
+      ],
+      "depends": [],
+      "parent": "E05-DOC-01"
+    },
+    {
+      "key": "E05-DOC-01b",
+      "type": "doc",
+      "title": "API Design: yêu cầu và duyệt 締め再開 (2 API)",
+      "goal": "CLS_REOPEN_REQUEST, CLS_REOPEN_DECIDE.",
+      "specs": [
+        "api-list CLS_REOPEN_REQUEST, CLS_REOPEN_DECIDE",
+        "CLS_DAY_REOPEN_TECH §4.1..§4.6",
+        "ADR-005",
+        "Q1, Q53, Q54, Q55, Q84 (đã chốt)"
+      ],
+      "dod": [
+        "File {API_ID}_API.md cho từng API: request (reason; decision và note), response (request_id, status; status reopened hoặc locked), quyền ROLE-005 aal2, mã lỗi",
+        "Chốt mã DAY_REOPEN_NOT_ALLOWED ở cả hai API: lúc gửi (không phải ngày locked, không phải ngày khóa gần nhất, quá N ngày, thiếu N trong 業務規程 kèm params [null]) và lúc duyệt (chỉ nhánh có ngày sau không còn open, N không kiểm lại, yêu cầu giữ pending, ghi audit guard.write_blocked kèm later_day_id)",
+        "Chốt người nhận thông báo: day_reopen_requested gửi ROLE-007 active và mọi ROLE-005 active khác người yêu cầu (Q62), thiếu ROLE-005 khác thì vẫn gửi ROLE-007 kèm ops_alerts no_recipient; day_reopen_decided và business_day_relocked theo Q37 (mọi ROLE-007 active), đối chiếu OUTBOX_DB §4.1.1",
+        "Chốt hợp đồng tuần tự hóa xuyên ngày bằng advisory day-state (ADR-005 R10) dùng chung với E05-BE-03, và nguồn giá trị N (reopen_window_days của bản market_rule hiệu lực)",
+        "Chốt payload của day_reopen_requested ({business_day_id, business_date, request_id, lock_no}) và day_reopen_decided ({business_day_id, business_date, request_id, decision}) khớp NTF_CRITICAL_RETRY_TECH §4.3 (worker tra người yêu cầu bằng request_id); Q62 chỉ mở rộng người nhận cho day_reopen_requested, không cho day_reopen_decided và business_day_relocked"
+      ],
+      "depends": [],
+      "parent": "E05-DOC-01"
+    },
+    {
+      "key": "E05-DOC-01c",
+      "type": "doc",
+      "title": "API Design: tranh chấp (5 API)",
+      "goal": "CLS_DISPUTE_LIST, CLS_DISPUTE_GET, CLS_DISPUTE_CREATE, CLS_DISPUTE_UPDATE, CLS_DISPUTE_CLOSE.",
+      "specs": [
+        "api-list CLS_DISPUTE_*",
+        "CLS_DB §4.1, §4.2",
+        "CLS_DISPUTE_LIST_SPEC §4.3",
+        "CLS_DISPUTE_DETAIL_SPEC §4.3",
+        "Q47 (đã chốt), Q32 (xem E05-CLR-02)"
+      ],
+      "dod": [
+        "File {API_ID}_API.md cho từng API: request, response, quyền ROLE-005 aal2, mã lỗi (VALIDATION, DAY_LOCKED chỉ ở tạo, INVALID_STATE khi đã đóng, NOT_FOUND)",
+        "Chốt tên khóa: request tạo (subjectDescription, cause, assigneeName, dueOn, evidencePaths[]) và response (id, dispute_code, status, business_day_id), cập nhật (note → update_id, status), đóng (finalResult → status, closed_at), danh sách (items[], summary, next_cursor) và chi tiết (evidence[] có signed_url, updates[])",
+        "Chốt tham số danh sách: status (unclosed, open, in_progress, closed, all), q tối đa 100 ký tự khớp ba trường văn bản và tiền tố dispute_code, dateFrom, dateTo, overdueOnly, sort (due_asc, due_desc, created_desc), keyset theo khóa sắp xếp cộng id; summary đếm toàn bảng không theo bộ lọc",
+        "Chốt kiểm đường dẫn chứng cứ thuộc người gọi (cùng hợp đồng với E04-DOC-01a, Q31); tên action audit dispute.create, dispute.update, dispute.close theo AUDIT_DB §4.1.1",
+        "Chốt cơ chế tuần tự hóa cập nhật và đóng tranh chấp (khóa cùng hàng disputes hoặc tương đương) để update đua với close không ghi thêm lịch sử sau khi đã đóng"
+      ],
+      "depends": [
+        "E05-CLR-02"
+      ],
+      "parent": "E05-DOC-01"
+    },
+    {
+      "key": "E05-DB-01",
+      "type": "db",
+      "special": "khóa ngày hai lớp (F-018)",
+      "title": "Migration disputes: bảng tranh chấp, mã DSP, trigger chặn tạo vào ngày khóa",
+      "goal": "Bảng hồ sơ tranh chấp, mã nghiệp vụ DSP-NNNNNN, trigger chỉ chặn INSERT theo ngày, bất biến khi đã đóng.",
+      "specs": [
+        "CLS_DB §4.1, RLS, Trigger",
+        "FR-CLS-003 AC1..AC5",
+        "Q47 (đã chốt)",
+        "Q32 (xem E05-CLR-02)"
+      ],
+      "dod": [
+        "Cột theo CLS_DB §4.1: subject_description và cause tối đa 500 ký tự, assignee_name khác rỗng sau trim và tối đa 100, due_on kiểu ngày, evidence_paths mặc định mảng rỗng, status chỉ open, in_progress, closed (mặc định open), final_result tối đa 500 ký tự, business_day_id, created_by, created_at, closed_by, closed_at",
+        "CHECK status khác closed hoặc final_result có giá trị (bắt buộc kết quả khi đóng); sequence dispute_code_seq; dispute_code mặc định DSP- cộng sáu chữ số (không cắt khi vượt 999999, cùng cách xử lý chỗ hở 19 của E-04), duy nhất, CHECK mẫu ^DSP-[0-9]{6,}$, không UPDATE sau khi chèn",
+        "Ba khóa ngoại (business_day_id, created_by, closed_by); chỉ mục theo business_day_id, theo (status, due_on), và duy nhất theo dispute_code",
+        "Trigger guard_locked_business_day() gắn vào disputes chỉ cho INSERT: ngày locked hoặc reopen_requested thì raise DAY_LOCKED kèm params [business_date, status] (hàm dùng chung thuộc E10-CORE-DB); UPDATE không kiểm trạng thái ngày (cổng G3)",
+        "Trigger disputes_guard_closed BEFORE UPDATE hoặc DELETE: raise khi bản ghi cũ đã closed (không mở lại, không sửa, không xóa), không kiểm trạng thái ngày",
+        "RLS bật, chỉ SELECT cho ROLE-005 (has_role và aal2); ghi qua RPC; không có DELETE nào",
+        "Hành vi hiện tại của guard INSERT là baseline tạm theo CLS_DB; schema và guard theo quyết định được chấp nhận ở E05-CLR-02 (Q32), không coi hành vi này đã giải quyết Q32"
+      ],
+      "depends": [
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05",
+        "E01-DB-01",
+        "E05-CLR-02"
+      ]
+    },
+    {
+      "key": "E05-DB-02",
+      "type": "db",
+      "special": "khóa ngày hai lớp (F-018): miễn cho cập nhật và đóng tranh chấp (cổng G3)",
+      "title": "Migration dispute_updates: lịch sử cập nhật tranh chấp, chỉ thêm",
+      "goal": "Mỗi lần cập nhật tiến độ một dòng, không ghi đè.",
+      "specs": [
+        "CLS_DB §4.2, RLS, Trigger",
+        "FR-CLS-003 AC2"
+      ],
+      "dod": [
+        "Cột id, dispute_id (khóa ngoại tới disputes), note (không rỗng, tối đa 500 ký tự), created_by (khóa ngoại tới profiles), created_at; chỉ mục (dispute_id, created_at)",
+        "Trigger deny_update_delete() chặn UPDATE và DELETE mọi role; thu quyền update, delete, truncate khỏi service_role; không có trigger khóa ngày (cổng G3)",
+        "RLS bật, chỉ SELECT cho ROLE-005 (has_role và aal2); ghi qua RPC"
+      ],
+      "depends": [
+        "E05-DB-01"
+      ]
+    },
+    {
+      "key": "E05-BE-01",
+      "type": "be",
+      "title": "CLS_DAY_LIST: danh sách ngày nghiệp vụ, lần khóa và yêu cầu 締め再開 đang chờ",
+      "goal": "Đọc ngày nghiệp vụ cho S-025 và cho các màn khác chọn ngày; ROLE-003 chỉ nhận bản rút gọn.",
+      "specs": [
+        "api-list CLS_DAY_LIST",
+        "CORE_DB §4.1..§4.3 (đọc)",
+        "FR-CLS-002, FR-CLS-004",
+        "P2 của S-025 (B1)"
+      ],
+      "dod": [
+        "Route GET: 401 khi không có phiên hoặc hết phiên; 403 khi role ngoài ROLE-003 và ROLE-005; ROLE-005 cần aal2 (MFA_REQUIRED), ROLE-003 không cần; ROLE-003 chỉ gọi được GET này, không gọi được các API ghi",
+        "Query status (một hoặc nhiều, phân tách dấu phẩy, giá trị ngoài open, locked, reopen_requested, reopened thì VALIDATION), limit tối đa 100 (màn dùng 60), cursor; sắp business_date giảm dần",
+        "ROLE-005: mỗi dòng có id, business_date, status, closed_at, closed_by_name, locks[] (id, lock_no, locked_at, locked_by_name, unlocked_at), pending_request (id, requested_by, requested_at, reason hoặc rỗng); tên người qua profiles_brief; ROLE-003 chỉ id, business_date, status",
+        "Kiểm thử quyền: ROLE-003 không bao giờ thấy lý do, người yêu cầu hay lần khóa; ngày có nhiều lần khóa trả đủ lock_no và unlocked_at"
+      ],
+      "depends": [
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06",
+        "E05-DOC-01a"
+      ]
+    },
+    {
+      "key": "E05-BE-02",
+      "type": "be",
+      "special": "締め chốt sổ, không chốt khi còn pending (ADR-005, ADR-015)",
+      "parent_of": [
+        "E05-BE-02a",
+        "E05-BE-02b"
+      ],
+      "title": "CLS_RECONCILIATION_GET: rpc_reconciliation_overview, bảng đối soát của một ngày",
+      "goal": "Tổng hợp giao dịch, giao hàng, ngoại lệ, tranh chấp của một ngày cho S-025; chia 2 sub-issue.",
+      "specs": [
+        "api-list CLS_RECONCILIATION_GET",
+        "CLS_DAILY_RECONCILIATION_SPEC §4.3, §6 A1, A6",
+        "FR-CLS-001 AC1, AC2a",
+        "ADR-015 R2"
+      ],
+      "dod": [
+        "Hoàn thành khi 2 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E05-BE-02a",
+      "type": "be",
+      "special": "締め chốt sổ, không chốt khi còn pending (ADR-005, ADR-015)",
+      "title": "rpc_reconciliation_overview: chọn ngày mặc định, tổng hợp và danh sách giao dịch chờ chốt",
+      "goal": "Phần tổng hợp và khối giao dịch chờ chốt của CLS_RECONCILIATION_GET.",
+      "specs": [
+        "CLS_DAILY_RECONCILIATION_SPEC §4.3 (E-1..E-9, F-1..F-9), §6 A1, A6",
+        "ADR-015 R1, R2",
+        "FR-CLS-001 AC1, AC2, AC2a",
+        "error-codes §1.4"
+      ],
+      "dod": [
+        "Route GET: 401, 403 (không phải ROLE-005), aal2 bắt buộc; dayId sai định dạng thì VALIDATION; RPC kiểm aal2 rồi has_role ROLE-005 (MFA_REQUIRED trước FORBIDDEN, không audit); dayId không tồn tại thì NOT_FOUND",
+        "Không có dayId: chọn ngày theo thứ tự (1) ngày reopened có business_date lớn nhất, (2) hôm nay theo JST nếu open, (3) ngày open mới nhất, (4) ngày mới nhất bất kỳ trạng thái; hôm nay chưa có dòng business_days thì rơi xuống (3), (4); chưa có ngày nào thì selected rỗng",
+        "selected gồm id, business_date, status, lock_no, closed_at, closed_by; summary đếm trên cả ngày (không theo bộ lọc, dùng trades_day_status_idx): total, pending, confirmed, rejected (gồm từ chối tay và tự từ chối), cancelled, confirmed_qty, confirmed_amount, deliveries_open (deliveries có status waiting hoặc in_progress của giao dịch trong ngày), disputes_open (disputes có status khác closed của ngày)",
+        "Số lượng và thành tiền đã chốt lấy từ view giá trị hiệu lực (sau 差額記録 và 逆仕訳 đã duyệt), làm tròn hiển thị floor về yên nguyên ở lớp hiển thị; riêng danh sách chờ chốt dùng qty nhân đơn giá gốc vì giao dịch pending chưa có điều chỉnh",
+        "pending_trades: tối đa 20 dòng của giao dịch pending trong ngày, sắp created_at tăng dần (cũ nhất trước), gồm trade_code, trade_type, lot (lot_code, product_name), buyer (code, name), qty, unit_price, created_at; hơn 20 dòng thì lấy tiếp bằng tab trades với status pending",
+        "Không bao giờ ghi dữ liệu và không đổi trạng thái; số liệu là ảnh chụp tại thời điểm gọi (nguồn sự thật cho điều kiện chốt vẫn là rpc_day_close)"
+      ],
+      "depends": [
+        "E05-BE-01",
+        "E04-DB-03",
+        "E03-DB-01",
+        "E05-DB-01",
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E05-DOC-01a",
+        "E01-BE-06",
+        "E07-DB-01"
+      ],
+      "parent": "E05-BE-02"
+    },
+    {
+      "key": "E05-BE-02b",
+      "type": "be",
+      "special": "締め chốt sổ, không chốt khi còn pending (ADR-005, ADR-015)",
+      "title": "CLS_RECONCILIATION_GET: các tab trades, deliveries, exceptions và disputes (keyset)",
+      "goal": "Các trang dữ liệu của bảng đối soát, mỗi lần một tab.",
+      "specs": [
+        "CLS_DAILY_RECONCILIATION_SPEC §4.3 (H-1..H-12), §6 'Nội dung tab'",
+        "FR-CLS-001 AC1",
+        "api-list CLS_RECONCILIATION_GET"
+      ],
+      "dod": [
+        "tab nhận bốn giá trị trades, deliveries, exceptions, disputes (giá trị khác thì VALIDATION); limit 20, cursor keyset trả next_cursor (rỗng khi hết): tab trades theo id tăng dần (REC §4.3); tab deliveries, exceptions, disputes theo khóa và cursor riêng chốt ở E05-DOC-01a",
+        "tab trades: lọc status (bỏ trống là tất cả, pending, confirmed, rejected, cancelled); mỗi dòng trade_code, trade_type, status, lot, qty_effective, unit_price_effective, amount_effective; dòng tổng đã chốt là tổng cả ngày, không theo bộ lọc hay trang",
+        "tab deliveries: mã giao dịch, trạng thái (waiting, in_progress, completed, exception), số lượng đã giao (tổng delivery_parts) và cần giao (số lượng hiệu lực); tab exceptions: mã giao dịch, loại (shortage, excess, return, partial_cancel), số lượng; tab disputes: đối tượng, trạng thái, hạn xử lý; tab 3 của giao diện gọi exceptions rồi disputes (DQ-2)",
+        "Số đếm các tab trong summary (deliveries_total, exceptions_total, disputes_total) dùng làm huy hiệu của H-1"
+      ],
+      "depends": [
+        "E05-BE-02a",
+        "E07-DB-01",
+        "E07-DB-02",
+        "E07-DB-03",
+        "E05-DB-01",
+        "E01-BE-06"
+      ],
+      "parent": "E05-BE-02"
+    },
+    {
+      "key": "E05-BE-03",
+      "type": "be",
+      "special": "締め chốt sổ, không chốt khi còn pending (ADR-005, ADR-015)",
+      "title": "CLS_DAY_CLOSE: rpc_day_close (chốt sổ, khóa ngày)",
+      "goal": "ROLE-005 chốt sổ một ngày: chặn khi còn giao dịch pending, khóa ngày, ghi lần khóa, outbox và audit trong một giao dịch.",
+      "specs": [
+        "FR-CLS-001",
+        "FR-CLS-002",
+        "CLS_DAY_CLOSE_TECH §4.1..§4.5",
+        "ADR-005 R6, R8, R10",
+        "ADR-015 R1, R3..R5"
+      ],
+      "dod": [
+        "Route: 401, 403 (không phải ROLE-005), MFA_REQUIRED (aal2 ở proxy), 415 và 400 khi body hỏng; dayId thiếu hoặc không khớp ^\\d{1,12}$ thì VALIDATION kèm fields.dayId; không nhận ngày gõ lại ở J-5 (chỉ là rào chắn ở client)",
+        "RPC kiểm aal2 trước has_role (MFA_REQUIRED trước FORBIDDEN, không audit); lấy advisory day-state trước mọi khóa hàng (cùng khóa với hai RPC 締め再開), rồi khóa hàng business_days FOR UPDATE; không có ngày thì NOT_FOUND; không khóa lots, trades, participants, deliveries",
+        "Ngày locked hoặc reopen_requested thì ghi audit guard.write_blocked rồi trả INVALID_STATE (trả object, không raise để audit được commit); chỉ nhận ngày open hoặc reopened, không chặn ngày quá khứ hay hôm nay, không buộc chốt theo thứ tự ngày (Q52)",
+        "Còn giao dịch pending (đếm sau khi giữ khóa, kể cả khi chốt lại ngày reopened, và giao dịch mới của hôm nay reopened): ghi audit guard.write_blocked kèm số pending, trả PENDING_TRADES_EXIST với params [n], không đổi trạng thái; không đếm tranh chấp hay giao hàng chưa xong (ADR-015 R3)",
+        "Khóa: một mốc thời gian lấy bằng clock_timestamp() sau khi đã giữ khóa dùng chung cho closed_at và locked_at; business_days chuyển sang locked kèm closed_by; thêm dòng business_day_locks (lock_no là số lớn nhất cộng 1, source live)",
+        "Outbox business_day_locked (dedup business_day_locked:{business_day_id}:{lock_no}, không critical, max_attempts gán tường minh là 3) với payload đủ bốn khóa business_day_id, business_date, lock_id, lock_no (lock_id là dòng business_day_locks vừa tạo, worker tính thưởng nhận lock_id này), không có tiền hay thông tin cá nhân; nếu trạng thái trước là reopened thì thêm business_day_relocked (dedup business_day_relocked:{business_day_id}:{lock_no}, Critical, max_attempts 4, cùng bốn khóa payload; hai dedup_key khác prefix nên không trùng nhau) cùng giao dịch",
+        "write_audit business_day.close_lock là khóa cuối cùng; vi phạm UQ hoặc trigger chuyển trạng thái là lưới an toàn, rollback và 500 kèm log ERROR và pgCode; response 200 gồm ok, day_id, lock_id, lock_no, closed_at (khóa chốt ở E05-DOC-01a); route ghi log business_day.close ok, rejected, failed"
+      ],
+      "depends": [
+        "E05-DOC-01a",
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05",
+        "E03-DB-01",
+        "E10-AUD-02",
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06"
+      ]
+    },
+    {
+      "key": "E05-BE-04",
+      "type": "be",
+      "special": "締め再開 hai người duyệt (ADR-005)",
+      "title": "CLS_REOPEN_REQUEST: rpc_day_reopen_request (yêu cầu 締め再開)",
+      "goal": "ROLE-005 gửi yêu cầu mở lại ngày đã khóa gần nhất kèm lý do.",
+      "specs": [
+        "FR-CLS-004 AC1, AC5..AC7",
+        "CLS_DAY_REOPEN_TECH §4.1..§4.3",
+        "ADR-005 R1, R3, R4, R8, R10",
+        "Q1, Q53, Q62 (đã chốt)"
+      ],
+      "dod": [
+        "Route: 401, 403, MFA_REQUIRED, 415 và 400; id và reason: id không khớp ^\\d{1,12}$, reason rỗng sau trim hoặc quá 500 ký tự thì VALIDATION kèm fields.reason",
+        "RPC kiểm aal2 trước has_role; lấy advisory day-state rồi business_days FOR UPDATE; không có ngày thì NOT_FOUND; ngày reopen_requested hoặc vi phạm chỉ mục duy nhất yêu cầu pending thì DAY_REOPEN_PENDING_EXISTS (M_CLS_006)",
+        "DAY_REOPEN_NOT_ALLOWED (params [N]) khi: ngày không phải locked; có ngày business_date lớn hơn với trạng thái khác open (không phải ngày khóa gần nhất, đọc sau khi giữ advisory); số ngày lịch JST từ locked_at của lần khóa hiện hành lớn hơn N",
+        "N lấy từ tham số reopen_window_days của bản market_rule đang hiệu lực (giá trị mặc định 3, Q1 đã chốt); thiếu bản hiệu lực hoặc thiếu tham số thì từ chối an toàn với params [null] và chèn ops_alerts rule_param_missing (commit dù trả lỗi nên RPC trả object, không raise); lần từ chối ở bước này không ghi audit",
+        "Ghi: INSERT day_reopen_requests (pending, lock_id là lần khóa hiện hành), business_days sang reopen_requested (closed_by và closed_at giữ nguyên); outbox day_reopen_requested (Critical, max_attempts 4, dedup day_reopen_requested:{request_id}) với payload đủ business_day_id, business_date, request_id, lock_no (không có lý do hay tên; worker tra người yêu cầu bằng request_id); worker gửi ROLE-007 active và mọi ROLE-005 active khác người yêu cầu, thiếu ROLE-005 khác thì vẫn gửi ROLE-007 và ghi ops_alerts no_recipient mức warning (Q62); write_audit business_day.reopen_request là khóa cuối; response ok, request_id, status",
+        "Lỗi bất ngờ (vi phạm khóa ngoại ghép lock và ngày, trigger chuyển trạng thái, CHECK, UQ, trùng dedup_key của outbox) thì rollback toàn bộ, 500 kèm log ERROR và pgCode; không đổi mọi exception thành DAY_REOPEN_PENDING_EXISTS; các lỗi nghiệp vụ vẫn trả object để audit và ops_alerts được commit"
+      ],
+      "depends": [
+        "E05-DOC-01b",
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05",
+        "E10-AUD-02",
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06"
+      ]
+    },
+    {
+      "key": "E05-BE-05",
+      "type": "be",
+      "special": "締め再開 hai người duyệt (ADR-005)",
+      "title": "CLS_REOPEN_DECIDE: rpc_day_reopen_decide (duyệt hoặc từ chối 締め再開)",
+      "goal": "ROLE-005 khác người yêu cầu duyệt (ngày thành reopened) hoặc từ chối (ngày về locked).",
+      "specs": [
+        "FR-CLS-004 AC2, AC3, AC5..AC7",
+        "CLS_DAY_REOPEN_TECH §4.4, §4.5",
+        "ADR-005 R2, R3, R5, R8, R10",
+        "Q54, Q55, Q84 (đã chốt)"
+      ],
+      "dod": [
+        "Route: 401, 403, MFA_REQUIRED, 415 và 400; id, requestId không khớp ^\\d{1,12}$, decision ngoài approve và reject, note quá 500 ký tự thì VALIDATION kèm fields",
+        "RPC kiểm aal2 trước has_role; advisory day-state, rồi business_days FOR UPDATE, rồi day_reopen_requests FOR UPDATE; yêu cầu không thuộc ngày thì NOT_FOUND; yêu cầu không còn pending hoặc ngày không còn reopen_requested thì INVALID_STATE (M_COM_015)",
+        "Người gọi chính là người yêu cầu: ghi audit guard.write_blocked với DAY_REOPEN_SELF_APPROVAL rồi trả object (403, không raise); CHECK decided_by khác requested_by là lưới DB; reject mà note rỗng sau trim thì VALIDATION kèm fields.note",
+        "approve mà có ngày business_date lớn hơn với trạng thái khác open: trả DAY_REOPEN_NOT_ALLOWED (params [N]), không đổi gì (yêu cầu vẫn pending, ngày vẫn reopen_requested, người duyệt vẫn từ chối được, Q84), ghi audit guard.write_blocked kèm later_day_id; reject không kiểm điều kiện này; N không kiểm lại lúc duyệt (Q54)",
+        "approve: yêu cầu thành approved (decided_by, decided_at, decision_note rỗng thì để null), business_day_locks.unlocked_at của lần khóa hiện hành ghi một lần (không xóa dòng), business_days thành reopened với closed_by và closed_at về rỗng; không xóa hay tính lại incentive_results hoặc báo cáo của lần khóa cũ",
+        "reject: yêu cầu thành rejected với decision_note bắt buộc, business_days về locked giữ lần khóa hiện hành, business_day_locks không đổi; không có API rút yêu cầu (Q55)",
+        "Outbox day_reopen_decided (Critical, max_attempts 4, dedup day_reopen_decided:{request_id}) với payload đủ business_day_id, business_date, request_id, decision, và write_audit business_day.reopen_approve hoặc business_day.reopen_reject (khóa cuối) cùng giao dịch; response 200 ok và status (reopened hoặc locked)",
+        "Lỗi bất ngờ (trigger chuyển trạng thái, CHECK closed_at, UQ approved_lock, trùng dedup_key của outbox) thì rollback toàn bộ ngày, yêu cầu, lần khóa, outbox và audit, 500 kèm log ERROR và pgCode"
+      ],
+      "depends": [
+        "E05-BE-04",
+        "E05-DOC-01b",
+        "E10-AUD-02",
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06"
+      ]
+    },
+    {
+      "key": "E05-BE-06",
+      "type": "be",
+      "special": "khóa ngày hai lớp (F-018)",
+      "title": "CLS_DISPUTE_CREATE: rpc_dispute_create (ghi nhận tranh chấp)",
+      "goal": "ROLE-005 tạo hồ sơ tranh chấp gắn vào ngày nghiệp vụ hiện tại.",
+      "specs": [
+        "FR-CLS-003 AC1, AC5",
+        "CLS_DB §4.1, RLS",
+        "CLS_DISPUTE_DETAIL_SPEC §4.2, §6 A1, A2, A4",
+        "Q47 (đã chốt), Q32 (xem E05-CLR-02)"
+      ],
+      "dod": [
+        "Route: 401, 403, MFA_REQUIRED, 415 và 400; subjectDescription và cause rỗng sau trim hoặc quá 500 ký tự, assigneeName rỗng hoặc quá 100, dueOn thiếu hoặc không phải ngày ISO, evidencePaths quá 5 phần tử thì VALIDATION kèm fields; không chặn dueOn trong quá khứ",
+        "RPC kiểm aal2 trước has_role; business_day_id lấy từ current_business_day() (get-or-create); ngày locked hoặc reopen_requested thì trigger raise DAY_LOCKED kèm params [business_date, status], ánh xạ 409; ngày reopened cho tạo",
+        "Đường dẫn chứng cứ thuộc người gọi và tệp đã tồn tại (cùng cách kiểm với E04-BE-01, Q31); INSERT disputes status open, created_by là người gọi, dispute_code từ giá trị mặc định (không truyền)",
+        "Outbox dispute_opened (dedup theo dispute, theo cấu hình thông báo) và write_audit dispute.create cùng giao dịch, khóa cuối; response 200 gồm id, dispute_code, status, business_day_id",
+        "Không bao giờ đổi trades, lots hay bút toán (tranh chấp là hồ sơ theo dõi, cổng G3)",
+        "Cờ và lượt thử của dispute_opened theo cấu hình thông báo (OUTBOX_DB §4.1.1): Critical thì max_attempts 4, thường thì 1; dedup dispute_opened:{dispute_id}"
+      ],
+      "depends": [
+        "E05-DB-01",
+        "E05-DOC-01c",
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05",
+        "E10-AUD-02",
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03",
+        "E10-SYS-02",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E05-CLR-02",
+        "E01-BE-06"
+      ]
+    },
+    {
+      "key": "E05-BE-07",
+      "type": "be",
+      "title": "CLS_DISPUTE_UPDATE: rpc_dispute_update (cập nhật tiến độ tranh chấp)",
+      "goal": "Thêm một dòng cập nhật; lần đầu chuyển open sang in_progress; không kiểm trạng thái ngày.",
+      "specs": [
+        "FR-CLS-003 AC2, AC4",
+        "CLS_DB §4.2, Trigger",
+        "CLS_DISPUTE_DETAIL_SPEC §6 A1, A3, A5"
+      ],
+      "dod": [
+        "Route: 401, 403, MFA_REQUIRED, 415 và 400; id không khớp số, note rỗng sau trim hoặc quá 500 ký tự thì VALIDATION kèm fields.note",
+        "RPC kiểm aal2 trước has_role; khóa hàng disputes (FOR UPDATE) rồi mới kiểm status, cùng cơ chế với E05-BE-08 để update và close nối đuôi; tranh chấp không tồn tại thì NOT_FOUND; tranh chấp đã closed thì INVALID_STATE và không thêm dòng lịch sử; không gọi lock_day_open và không kiểm trạng thái ngày: tranh chấp của ngày đã khóa vẫn cập nhật được (cổng G3)",
+        "INSERT dispute_updates cùng created_by; lần cập nhật đầu tiên đổi status open sang in_progress, các lần sau giữ nguyên; trường gốc (đối tượng, nguyên nhân, người chịu trách nhiệm, ngày dự kiến) không sửa được; write_audit dispute.update cùng giao dịch; response gồm update_id và status",
+        "Hai ROLE-005 cùng cập nhật một tranh chấp: cả hai dòng đều được ghi, không lỗi"
+      ],
+      "depends": [
+        "E05-DB-02",
+        "E05-DOC-01c",
+        "E10-AUD-02",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06"
+      ]
+    },
+    {
+      "key": "E05-BE-08",
+      "type": "be",
+      "title": "CLS_DISPUTE_CLOSE: rpc_dispute_close (đóng tranh chấp)",
+      "goal": "Đóng tranh chấp kèm kết quả cuối cùng; sau đó bất biến, không mở lại.",
+      "specs": [
+        "FR-CLS-003 AC3, AC4",
+        "CLS_DB §4.1 (final_result, closed_by, closed_at), Trigger disputes_guard_closed",
+        "CLS_DISPUTE_DETAIL_SPEC §6 A3"
+      ],
+      "dod": [
+        "Route: 401, 403, MFA_REQUIRED, 415 và 400; finalResult rỗng sau trim hoặc quá 500 ký tự thì VALIDATION kèm fields.finalResult",
+        "RPC kiểm aal2 trước has_role; khóa hàng disputes (FOR UPDATE) rồi mới kiểm status (cùng cơ chế với E05-BE-07, vì trigger disputes_guard_closed chỉ chặn UPDATE hoặc DELETE bảng disputes, không chặn INSERT vào dispute_updates); không có tranh chấp thì NOT_FOUND; đã closed thì INVALID_STATE; không kiểm trạng thái ngày (cổng G3)",
+        "Ghi final_result, status closed, closed_by, closed_at; write_audit dispute.close cùng giao dịch; sau đó trigger disputes_guard_closed chặn mọi UPDATE và DELETE, và không có API mở lại",
+        "Hai ROLE-005 cùng đóng: đúng một thành công, bên sau nhận INVALID_STATE"
+      ],
+      "depends": [
+        "E05-DB-01",
+        "E05-DOC-01c",
+        "E10-AUD-02",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06"
+      ]
+    },
+    {
+      "key": "E05-BE-09",
+      "type": "be",
+      "title": "CLS_DISPUTE_LIST và CLS_DISPUTE_GET: danh sách và chi tiết tranh chấp",
+      "goal": "Đọc hồ sơ tranh chấp cho S-026 và S-027.",
+      "specs": [
+        "api-list CLS_DISPUTE_LIST, CLS_DISPUTE_GET",
+        "CLS_DISPUTE_LIST_SPEC §4.3, §6 A3",
+        "CLS_DISPUTE_DETAIL_SPEC §4.3",
+        "Q47 (đã chốt)"
+      ],
+      "dod": [
+        "CLS_DISPUTE_LIST: quyền ROLE-005 aal2; status (unclosed là open cộng in_progress, open, in_progress, closed, all), q tối đa 100 ký tự (khớp chứa, không phân biệt hoa thường, trên subject_description, cause, assignee_name, và theo tiền tố dispute_code), dateFrom, dateTo (theo business_date của tranh chấp), overdueOnly, sort (due_asc mặc định, cùng ngày thì tạo mới nhất trước; due_desc; created_desc), limit, cursor keyset",
+        "Mỗi dòng gồm id, dispute_code, status, subject_description, cause, assignee_name, due_on, business_day (business_date, status), created_at, is_overdue (hạn trước hôm nay theo JST và chưa closed); summary (open, in_progress, overdue, closed) đếm toàn bảng, không theo bộ lọc; tham số sai thì VALIDATION",
+        "CLS_DISPUTE_GET: id không tồn tại thì NOT_FOUND; trả dispute_code, các trường gốc, evidence[] (name, size, signed_url), business_day, created_by_name, created_at, final_result, closed_by_name, closed_at và updates[] theo thời gian tăng dần; signed URL hết hạn thì gọi lại để lấy URL mới"
+      ],
+      "depends": [
+        "E05-DB-01",
+        "E05-DB-02",
+        "E05-DOC-01c",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06"
+      ]
+    },
+    {
+      "key": "E05-FE-01",
+      "type": "fe",
+      "special": "締め chốt sổ, không chốt khi còn pending (ADR-005, ADR-015)",
+      "parent_of": [
+        "E05-FE-01a",
+        "E05-FE-01b",
+        "E05-FE-01c",
+        "E05-FE-01d"
+      ],
+      "title": "S-025 CLS_DAILY_RECONCILIATION: đối soát, chốt sổ và 締め再開",
+      "goal": "Màn làm việc cuối ngày của ROLE-005, 5 trạng thái giao diện (normal, ready-dialog, locked-reopen, reopen-requested, reopened), chia 4 sub-issue.",
+      "specs": [
+        "CLS_DAILY_RECONCILIATION_SPEC (trạng thái theo bảng §2 và §6)",
+        "FR-CLS-001..004"
+      ],
+      "dod": [
+        "Hoàn thành khi 4 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E05-FE-01a",
+      "type": "fe",
+      "special": "締め chốt sổ, không chốt khi còn pending (ADR-005, ADR-015)",
+      "title": "S-025a: khung màn, chọn ngày, banner trạng thái ngày và thẻ tổng hợp",
+      "goal": "Mở màn, chọn ngày (C-4), làm mới, banner D-1, 9 thẻ tổng hợp, các hành vi theo trạng thái ngày.",
+      "specs": [
+        "CLS_DAILY_RECONCILIATION_SPEC §4.1 (A..E, I-1, I-2), §5 (Initializing, C-4, C-5), §6 'Hiển thị theo trạng thái ngày'",
+        "ADR-015 R2"
+      ],
+      "dod": [
+        "Mở màn: proxy xử lý hết phiên (M_COM_004, M_COM_005), tài khoản bị khóa (M_PAU_002), role khác ROLE-005 (về trang chủ, M_COM_006), phiên aal1 (bước TOTP, M_COM_019, xong quay lại); aal2 thì hiện skeleton, gọi song song SYS_ME, CLS_DAY_LIST, CLS_RECONCILIATION_GET (tab trades, không dayId), server chọn ngày mặc định, ghi ?dayId= vào URL bằng replace",
+        "URL có dayId hợp lệ thì dùng; dayId không phải số thì bỏ qua; ngày không tồn tại (NOT_FOUND) thì banner M_COM_007 rồi gọi lại không dayId; chưa có ngày nghiệp vụ nào thì ẩn D đến I, hiện M_COM_021 và khóa C-4",
+        "C-4: chọn ngày trong CLS_DAY_LIST (mỗi dòng DD/MM/YYYY, trạng thái, kèm #lock_no khi đã khóa); đổi ngày thì gọi lại CLS_RECONCILIATION_GET giữ tab, reset lọc về Tất cả, bỏ cursor, cập nhật ?dayId=; C-5 làm mới gọi lại CLS_DAY_LIST và CLS_RECONCILIATION_GET giữ ngày, tab, lọc, cập nhật giờ HH:mm (JST); không tự làm mới định kỳ",
+        "Banner D-1 có 5 biến thể: chặn (M_CLS_001 dạng banner), sẵn sàng (kèm M_CLS_004 khi còn tranh chấp mở), đã khóa (khóa lúc, bởi, lần #n), chờ duyệt, đã mở lại (M_CLS_009); 9 thẻ E-1..E-9 (tổng, chờ chốt viền nhấn khi lớn hơn 0, đã chốt, bị từ chối, đã hủy, số lượng đã chốt định dạng #,##0.###, tổng tiền đã chốt, giao hàng chưa hoàn tất, tranh chấp đang mở)",
+        "Bảng hiển thị theo trạng thái ngày đúng cho cả 6 cột của spec (open còn pending; open hoặc reopened hết pending; reopened còn pending; locked; reopen_requested với người yêu cầu; reopen_requested với ROLE-005 khác); header: A-2 là ngày nghiệp vụ hiện tại từ SYS_ME (không đổi theo ngày chọn); ngày dùng định dạng DD/MM/YYYY ở UI, ISO ở API",
+        "Lỗi dùng chung: MFA_REQUIRED (bước TOTP, mất nội dung modal), SESSION_EXPIRED, FORBIDDEN (M_COM_006 rồi về trang chủ), mất mạng (M_COM_003), 503 (M_COM_002), 500 hoặc mã lạ (M_COM_001 kèm requestId), BAD_REQUEST (M_COM_018); màn bắt buộc online"
+      ],
+      "depends": [
+        "E05-BE-01",
+        "E05-BE-02a",
+        "E10-SYS-01",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01"
+      ],
+      "parent": "E05-FE-01"
+    },
+    {
+      "key": "E05-FE-01b",
+      "type": "fe",
+      "title": "S-025b: khối giao dịch chờ chốt và bảng đối soát ba tab",
+      "goal": "Khối F (chặn 締め) và bảng đối soát với tab, lọc, tải thêm.",
+      "specs": [
+        "CLS_DAILY_RECONCILIATION_SPEC §4.1 (F, H), §5 (F-9, F-10, H-1, H-2, H-12), §6 'Nội dung tab'",
+        "ADR-015 R2",
+        "FR-CLS-001 AC1, AC2a"
+      ],
+      "dod": [
+        "Khối F chỉ hiện khi ngày open hoặc reopened và E-2 lớn hơn 0: tiêu đề kèm số chờ chốt, hướng dẫn (ROLE-005 không tự chốt hay từ chối), bảng tối đa 20 dòng với mã GD, loại (相対取引 hoặc せり), lot, bên mua, giá trị qty nhân đơn giá (#,##0 円), giờ tạo; hơn 20 dòng thì xem tiếp qua lọc Chờ chốt ở H-2",
+        "F-9 mở màn đích ở tab mới: negotiated sang TRD_CONFIRMATION_LIST (S-016), auction sang TRD_AUCTION_CONFIRM_QUEUE (S-020), ở chế độ chỉ đọc cho ROLE-005; F-10 kiểm tra lại giống C-5, E-2 về 0 thì ẩn F, D-1 sang Sẵn sàng, I-3 bật",
+        "Bảng H: ba tab (Giao dịch, Giao hàng, Ngoại lệ và tranh chấp) có huy hiệu số dòng, mặc định Giao dịch; chip lọc trạng thái (Tất cả, Chờ chốt, Đã chốt, Bị từ chối, Đã hủy) chỉ ở tab Giao dịch, chọn thì gọi lại với status và bỏ cursor; cột mã, loại, trạng thái, lot, số lượng, đơn giá, thành tiền là giá trị hiệu lực; dòng tổng đã chốt luôn là tổng cả ngày",
+        "Tải thêm 20 dòng mỗi lần (disabled kèm spinner khi đang tải, ẩn khi next_cursor rỗng), cập nhật H-11 \"Hiển thị a / b\"; tab 3 có hai bảng (Ngoại lệ gọi exceptions, Tranh chấp gọi disputes) mỗi bảng giữ cursor, trạng thái đang tải và nút Tải thêm riêng, bảng này hết dữ liệu không ẩn nút của bảng kia; đổi ngày hoặc tab thì reset cả hai; cột tab Giao hàng và Ngoại lệ và tranh chấp theo spec §6; rỗng thì M_COM_021"
+      ],
+      "depends": [
+        "E05-FE-01a",
+        "E05-BE-02b",
+        "E03-FE-03",
+        "E03-FE-07"
+      ],
+      "parent": "E05-FE-01"
+    },
+    {
+      "key": "E05-FE-01c",
+      "type": "fe",
+      "special": "締め chốt sổ, không chốt khi còn pending (ADR-005, ADR-015)",
+      "title": "S-025c: thanh thao tác 締め, hộp thoại xác nhận và các lỗi chốt sổ",
+      "goal": "I-3 và hộp thoại J: gõ lại ngày, gọi CLS_DAY_CLOSE, xử lý lỗi.",
+      "specs": [
+        "CLS_DAILY_RECONCILIATION_SPEC §4.1 (I, J), §4.2 (J-5), §5 (I-3, J-5, J-7, J-8, Error Handling E1, E2, E8)",
+        "FR-CLS-001, FR-CLS-002",
+        "ADR-015 R1"
+      ],
+      "dod": [
+        "I-3 hiện khi ngày open hoặc reopened và disabled khi E-2 lớn hơn 0 (kèm lý do I-2 'Còn n giao dịch chờ chốt'); bấm mở hộp thoại J: J-5 trống và focus, J-6 ẩn, J-8 disabled; J-2 tóm tắt số giao dịch theo trạng thái, J-3 hiện M_CLS_004 khi có tranh chấp mở, J-4 cảnh báo hệ quả M_CLS_003",
+        "J-5: tắt autocomplete, cấm dán; trim rồi so bằng tuyệt đối với business_date đã đổi sang DD/MM/YYYY (không chấp nhận ISO hay thiếu số 0); khớp thì J-8 enabled, khác (độ dài từ 10 hoặc rời ô) thì J-6 hiện M_CLS_013; chỉ kiểm ở client, không gửi ngày này cho server",
+        "J-8: khóa J-7 và J-8 kèm spinner, gọi CLS_DAY_CLOSE (dayId); thành công thì đóng, toast M_CLS_014 kèm ngày, gọi lại CLS_DAY_LIST và CLS_RECONCILIATION_GET (ngày locked, lần #lock_no), nếu là ngày hiện tại thì gọi lại SYS_ME; J-7, Esc, bấm nền đóng không gọi API, bị khóa khi đang gửi",
+        "Lỗi: PENDING_TRADES_EXIST thì đóng J, hộp thoại M_CLS_001 kèm params[0], tải lại để hiện khối F và khóa I-3; INVALID_STATE thì đóng J, banner M_CLS_002, tải lại; NOT_FOUND thì banner M_COM_007 và gọi lại không dayId; lỗi chung xử lý như E05-FE-01a",
+        "Chốt sổ ngày hôm nay là ca bình thường ở production (không chặn); không chặn theo giờ chợ; không bắt chốt theo thứ tự ngày (Q52)"
+      ],
+      "depends": [
+        "E05-FE-01b",
+        "E05-BE-03"
+      ],
+      "parent": "E05-FE-01"
+    },
+    {
+      "key": "E05-FE-01d",
+      "type": "fe",
+      "special": "締め再開 hai người duyệt (ADR-005)",
+      "title": "S-025d: khối 締め再開, hộp thoại yêu cầu và duyệt hoặc từ chối",
+      "goal": "Khối G, modal K, và duyệt hoặc từ chối yêu cầu của người khác.",
+      "specs": [
+        "CLS_DAILY_RECONCILIATION_SPEC §4.1 (G, K), §4.2 (K-4, G-7), §5 (G-4, K-4, K-8, K-9, G-8, G-9, Error Handling E3..E7)",
+        "FR-CLS-004",
+        "ADR-005 R1, R2, R3"
+      ],
+      "dod": [
+        "Khối G hiện khi ngày locked, reopen_requested hoặc reopened: G-2 điều kiện mở lại (N là 3 ngày theo Q1), G-3 lịch sử lần khóa (Lần #n, khóa lúc, bởi, mở lại lúc hoặc —; mới nhất trên cùng); G-4 chỉ khi ngày locked và không có yêu cầu chờ; G-5 và G-6 chỉ khi reopen_requested (G-6 'Chờ ROLE-005 khác duyệt' với người yêu cầu, ✔ khi khác người)",
+        "Modal K: K-2 ngày và lần khóa hiện hành; K-3 ba dòng kiểm (dòng 1 ngày locked có business_date lớn nhất trong CLS_DAY_LIST, dòng 2 ghi 'máy chủ kiểm khi gửi' vì không kiểm N ở client, dòng 3 chưa có yêu cầu chờ); K-4 lý do tối đa 500 ký tự kèm đếm K-5, K-9 chỉ bật khi lý do có nội dung và dòng 1, 3 đạt; K-6 gợi ý dùng 逆仕訳 hoặc 差額記録; K-8 hoặc Esc khi K-4 có nội dung thì hỏi M_COM_020",
+        "K-9: khóa K-8, K-9 kèm spinner, gọi CLS_REOPEN_REQUEST (reason đã trim); thành công thì toast M_CLS_008, tải lại (ngày reopen_requested: G-4 ẩn, G-5 hiện); lỗi: DAY_REOPEN_NOT_ALLOWED thì giữ K, hộp thoại M_CLS_005 kèm N (hiện — khi null), K-3 dòng 2 thành ✖; DAY_REOPEN_PENDING_EXISTS thì đóng K, banner M_CLS_006, tải lại; VALIDATION thì M_COM_009 hoặc M_COM_010 dưới K-4",
+        "Người xem là ROLE-005 khác người yêu cầu: G-7 ghi chú (tối đa 500 ký tự, bắt buộc khi từ chối), G-8 Từ chối, G-9 Duyệt mở lại; ẩn cả ba với người yêu cầu; G-9 gọi CLS_REOPEN_DECIDE (approve, note nếu có), thành công thì tải lại, ngày reopened, D-1 là M_CLS_009, I-3 hiện; G-8 với note rỗng thì M_COM_009 ngay dưới G-7 không gọi API, có note thì gọi (reject), toast M_CLS_015, ngày về locked",
+        "Lỗi duyệt: DAY_REOPEN_SELF_APPROVAL thì banner M_CLS_007 rồi tải lại (ẩn G-7..G-9); INVALID_STATE thì banner M_COM_015 kèm trạng thái mới rồi tải lại; DAY_REOPEN_NOT_ALLOWED lúc duyệt (có ngày sau đã chốt) thì dialog M_CLS_005 biến thể lúc duyệt, yêu cầu vẫn chờ, người duyệt có thể từ chối; không có hộp thoại xác nhận riêng khi duyệt (OQ-7 còn mở)",
+        "G-7 quá 500 ký tự thì M_COM_010 (tên trường Ghi chú quyết định); lỗi VALIDATION của server ở G-8 hoặc G-9 hiện inline theo fields.note và bật lại nút; khi G-9 chạy khóa G-7..G-9 kèm spinner; chuyển menu hoặc đăng xuất khi modal K có nội dung thì hỏi M_COM_020"
+      ],
+      "depends": [
+        "E05-FE-01a",
+        "E05-BE-04",
+        "E05-BE-05"
+      ],
+      "parent": "E05-FE-01"
+    },
+    {
+      "key": "E05-FE-02",
+      "type": "fe",
+      "special": "khóa ngày hai lớp (F-018)",
+      "title": "S-026 CLS_DISPUTE_LIST: danh sách tranh chấp",
+      "goal": "Danh sách tranh chấp của ROLE-005 với bộ đếm, lọc, tìm, sắp xếp; 3 trạng thái (normal, empty, day-locked).",
+      "specs": [
+        "CLS_DISPUTE_LIST_SPEC (3 trạng thái: normal, empty, day-locked)",
+        "FR-CLS-003",
+        "Q47, Q32"
+      ],
+      "dod": [
+        "Mở màn: proxy xử lý hết phiên, tài khoản bị khóa, role khác ROLE-005, aal1 (như E05-FE-01a); aal2 thì đọc bộ lọc từ URL (thiếu thì mặc định), gọi song song SYS_ME và CLS_DISPUTE_LIST; URL sai tham số thì VALIDATION, reset bộ lọc, banner M_COM_008",
+        "Bộ đếm D-1..D-4 (mở, đang xử lý, quá hạn nhấn cảnh báo khi lớn hơn 0, đã đóng) luôn là toàn bảng, không theo bộ lọc; lọc trạng thái E-1 (mặc định Chưa đóng), tìm E-2 (trim, tối đa 100, sau 400 ms hoặc Enter), ngày ghi nhận E-3 (hai ô, gọi khi đủ hai hoặc xóa cả hai, ô đến không trước ô từ), sắp xếp E-4 (mặc định ngày dự kiến tăng dần), chỉ quá hạn E-5; mọi thay đổi gọi lại, bỏ cursor, cập nhật URL",
+        "Bảng F: mã DSP-NNNNNN, trạng thái, đối tượng và nguyên nhân (cắt 60 ký tự kèm tooltip), người chịu trách nhiệm, ngày dự kiến (quá hạn in đậm kèm 'quá hạn'), ngày ghi nhận kèm chip 🔒 hoặc 'mở', giờ tạo (DD/MM/YYYY HH:mm JST), liên kết Chi tiết giữ bộ lọc khi quay lại; đếm F-10 (có tìm, ngày hoặc quá hạn thì chỉ hiện số đã tải); Tải thêm 20 dòng",
+        "Rỗng thì G-1 (M_COM_021) kèm nút Xóa bộ lọc đưa E-1..E-5 về mặc định; ngày hiện tại locked hoặc reopen_requested (theo SYS_ME) thì C-5 disabled và banner H-1 M_CLS_012 (báo sớm, không gọi API); C-5 mở /disputes/new khi ngày hiện tại mở; C-4 làm mới",
+        "Lỗi dùng chung: MFA_REQUIRED, SESSION_EXPIRED, FORBIDDEN, mất mạng, 503, 500 như E05-FE-01a; không tự làm mới định kỳ"
+      ],
+      "depends": [
+        "E05-BE-09",
+        "E10-SYS-01",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E05-CLR-02"
+      ]
+    },
+    {
+      "key": "E05-FE-03",
+      "type": "fe",
+      "special": "khóa ngày hai lớp (F-018): miễn cho cập nhật và đóng tranh chấp (cổng G3)",
+      "parent_of": [
+        "E05-FE-03a",
+        "E05-FE-03b"
+      ],
+      "title": "S-027 CLS_DISPUTE_DETAIL: tạo, cập nhật và đóng tranh chấp",
+      "goal": "Màn chi tiết tranh chấp: tạo mới, theo dõi, cập nhật tiến độ, đóng; 3 trạng thái wireframe (normal, create, close-error) và bảng hiển thị 4 cột (tạo, mở, ngày ghi nhận khóa, đã đóng), chia 2 sub-issue.",
+      "specs": [
+        "CLS_DISPUTE_DETAIL_SPEC (3 trạng thái wireframe và bảng §6 'Hiển thị theo trạng thái')",
+        "FR-CLS-003"
+      ],
+      "dod": [
+        "Hoàn thành khi 2 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E05-FE-03a",
+      "type": "fe",
+      "special": "khóa ngày hai lớp (F-018)",
+      "title": "S-027a: màn tạo tranh chấp (/disputes/new)",
+      "goal": "Form tạo, chứng cứ, báo sớm ngày khóa, xử lý DAY_LOCKED qua S-024.",
+      "specs": [
+        "CLS_DISPUTE_DETAIL_SPEC §4.1 (E-1..E-10), §4.2, §5 (E-10, E-9, E-6, Error E1, E2, E5), §6 A2",
+        "FR-CLS-003 AC1",
+        "Q32"
+      ],
+      "dod": [
+        "Mở màn: gọi SYS_ME; form trống, focus E-1; E-8 ghi 'gắn vào ngày nghiệp vụ hiện tại'; ngày hiện tại locked hoặc reopen_requested thì E-8 thêm M_CLS_012 và E-10 disabled (báo sớm theo SYS_ME, nguồn sự thật là server)",
+        "Trường: đối tượng và nguyên nhân bắt buộc tối đa 500 ký tự, người chịu trách nhiệm bắt buộc tối đa 100, ngày dự kiến bắt buộc (DD/MM/YYYY, gửi ISO, không chặn ngày quá khứ); rời ô rỗng thì M_COM_009 dưới từng ô; quá dài thì M_COM_010",
+        "Chứng cứ tùy chọn: tối đa 5 tệp, 10 MB, jpg, png, pdf; kiểm ở client (M_COM_025, M_COM_026, M_COM_027) rồi SYS_EVIDENCE_UPLOAD_URL và PUT lên signed_url; lỗi PUT thì M_COM_028 kèm tên tệp, cho xóa rồi chọn lại; xóa dòng chỉ bỏ khỏi danh sách",
+        "E-10 Lưu: kiểm §4.2 trước (thiếu thì M_COM_008 và M_COM_009 từng ô, focus ô đầu, không gọi API); hợp lệ thì khóa E-9, E-10 kèm spinner, gọi CLS_DISPUTE_CREATE; thành công thì toast M_CLS_016 kèm dispute_code, chuyển /disputes/{id} bằng replace; E-9 Hủy khi có dữ liệu thì hỏi M_COM_020",
+        "Lỗi: DAY_LOCKED (ngày vừa 締め) thì mở component S-024 với M_ADJ_010 và gợi ý M_ADJ_013 (không có nút điều chỉnh), giữ form, đóng modal thì gọi lại SYS_ME để hiện M_CLS_012 và khóa E-10; VALIDATION thì M_COM_008 và mã theo fields; lỗi dùng chung như E05-FE-01a; liên kết F-2 sang yêu cầu điều chỉnh mở ở tab mới, giữ form đang nhập",
+        "Chặn Lưu khi còn tệp đang tải hoặc bảo đảm yêu cầu chỉ mang các tệp đã PUT thành công; không âm thầm bỏ tệp người dùng vừa chọn"
+      ],
+      "depends": [
+        "E05-BE-06",
+        "E04-FE-03",
+        "E10-SYS-01",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-SYS-02",
+        "E05-CLR-02"
+      ],
+      "parent": "E05-FE-03"
+    },
+    {
+      "key": "E05-FE-03b",
+      "type": "fe",
+      "special": "khóa ngày hai lớp (F-018): miễn cho cập nhật và đóng tranh chấp (cổng G3)",
+      "title": "S-027b: màn chi tiết (/disputes/[id]), cập nhật tiến độ và đóng",
+      "goal": "Hiển thị hồ sơ, lịch sử, cập nhật và đóng tranh chấp.",
+      "specs": [
+        "CLS_DISPUTE_DETAIL_SPEC §4.1 (C..I), §4.2 (H-1, I-1), §5 (E-6, H-2, I-3, Error E3, E4), §6 'Hiển thị theo trạng thái'",
+        "FR-CLS-003 AC2..AC4"
+      ],
+      "dod": [
+        "Mở chi tiết: gọi song song SYS_ME và CLS_DISPUTE_GET; E-1..E-6 chỉ đọc; tiêu đề kèm dispute_code và chip trạng thái; E-5 kèm 'quá hạn' khi hạn trước hôm nay và chưa đóng; E-7 ngày ghi nhận kèm chip trạng thái ngày; E-6 tệp mở bằng signed URL ở tab mới (hết hạn thì gọi lại CLS_DISPUTE_GET); không có tệp thì M_COM_021",
+        "Banner D-1: info G3 khi ngày ghi nhận locked hoặc reopen_requested mà tranh chấp chưa đóng (vẫn cập nhật và đóng được); M_CLS_010 khi đã đóng; F-1..F-3 chữ tĩnh về không đổi số liệu giao dịch và liên kết sang yêu cầu điều chỉnh theo mã GD trích từ E-1 (không có mã thì mở không q)",
+        "Lịch sử G: dòng 'Tạo tranh chấp' rồi từng cập nhật (giờ, tên, ghi chú) rồi dòng 'Đóng tranh chấp' nếu đã đóng, tăng dần theo thời gian, không sửa; chưa có cập nhật nào thì chỉ có dòng tạo (không hiện M_COM_021)",
+        "H-2 Lưu cập nhật (chỉ open hoặc in_progress, kể cả ngày ghi nhận khóa): H-1 trim, rỗng thì M_COM_009, quá 500 ký tự thì M_COM_010 inline, không gọi API; lỗi VALIDATION của server hiện banner M_COM_008 và inline theo fields; thành công thì toast M_CLS_017, xóa H-1, tải lại (lần đầu chip thành Đang xử lý); I-3 Đóng: I-1 rỗng thì M_CLS_011 ở I-2 và focus không gọi API, quá 500 thì M_COM_010; thành công thì toast M_CLS_018, tải lại ở trạng thái closed (D-1 M_CLS_010, ẩn H và I-3, I-1 chỉ đọc, hiện I-4 người đóng và giờ); không có hộp thoại xác nhận khi đóng (OQ-5)",
+        "Lỗi: INVALID_STATE (người khác vừa đóng) thì banner M_CLS_010, tải lại, bỏ nội dung đang nhập; NOT_FOUND thì M_COM_007 kèm nút về danh sách; VALIDATION theo fields; rời màn khi H-1 hoặc I-1 có nội dung thì hỏi M_COM_020; lỗi dùng chung như E05-FE-01a"
+      ],
+      "depends": [
+        "E05-FE-03a",
+        "E05-BE-07",
+        "E05-BE-08",
+        "E05-BE-09"
+      ],
+      "parent": "E05-FE-03"
+    },
+    {
+      "key": "E05-QA-01",
+      "type": "qa",
+      "special": "締め chốt sổ, không chốt khi còn pending (ADR-005, ADR-015)",
+      "title": "QA đầu cuối: chốt sổ, chặn khi còn pending, chốt lại ngày reopened",
+      "goal": "Kiểm thử luồng 締め từ trình duyệt thật.",
+      "specs": [
+        "FR-CLS-001",
+        "FR-CLS-002",
+        "ADR-015",
+        "CLS_DAY_CLOSE_TECH test case gợi ý"
+      ],
+      "dod": [
+        "Kịch bản: ngày open không pending thì chốt được (lần #1, ngày locked, một outbox business_day_locked, một audit business_day.close_lock, không có business_day_relocked); còn pending thì I-3 bị khóa, chốt trực tiếp qua API trả PENDING_TRADES_EXIST kèm số n và ngày giữ open, không outbox; tranh chấp mở hoặc giao hàng chưa xong vẫn chốt được",
+        "Ca đua: giao dịch mới tạo sau khi mở hộp thoại J thì nhận M_CLS_001; hai ROLE-005 cùng chốt thì đúng một thành công, bên sau INVALID_STATE, một dòng business_day_locks",
+        "Chốt lại ngày reopened: lock_no 2, lần khóa cũ giữ unlocked_at, thêm business_day_relocked (Critical); hôm nay reopened có giao dịch mới pending thì bị chặn, hết pending mới chốt được",
+        "Quyền: aal1 thì MFA_REQUIRED, role khác thì FORBIDDEN; sau chốt mọi ghi vào ngày bị chặn (DAY_LOCKED) trừ luồng miễn trừ; mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả",
+        "Kiểm payload business_day_locked và business_day_relocked: lock_id và lock_no đúng lần khóa vừa tạo, đúng bốn khóa, không có tiền hay thông tin cá nhân",
+        "Chốt lại ngày reopened sinh hai sự kiện có dedup_key khác nhau (business_day_locked:{id}:{lock_no} và business_day_relocked:{id}:{lock_no}), không vi phạm UQ dedup"
+      ],
+      "depends": [
+        "E05-FE-01c",
+        "E03-BE-04",
+        "E03-BE-02"
+      ]
+    },
+    {
+      "key": "E05-QA-02",
+      "type": "qa",
+      "special": "締め再開 hai người duyệt (ADR-005)",
+      "title": "QA đầu cuối: 締め再開 hai người duyệt",
+      "goal": "Kiểm thử luồng yêu cầu, duyệt, từ chối mở lại ngày.",
+      "specs": [
+        "FR-CLS-004",
+        "ADR-005",
+        "CLS_DAY_REOPEN_TECH test case gợi ý"
+      ],
+      "dod": [
+        "Yêu cầu: ngày locked gần nhất trong N ngày thì thành reopen_requested kèm một audit và một outbox Critical; ngày open hoặc reopened, ngày cũ hơn ngày khóa gần nhất, quá N ngày, thiếu N trong 業務規程 (params null kèm ops_alerts rule_param_missing) đều DAY_REOPEN_NOT_ALLOWED; yêu cầu thứ hai thì DAY_REOPEN_PENDING_EXISTS; lý do rỗng hoặc quá 500 thì VALIDATION",
+        "Duyệt: tự duyệt thì 403 kèm một audit chặn; người khác duyệt thì reopened, unlocked_at có, closed_at rỗng, dòng khóa cũ còn; từ chối không ghi chú thì VALIDATION, có ghi chú thì ngày về locked, khóa không đổi; yêu cầu đã quyết thì INVALID_STATE",
+        "Duyệt sau khi ngày sau đã chốt: DAY_REOPEN_NOT_ALLOWED, yêu cầu vẫn pending, từ chối vẫn được (Q84); thông báo Critical tới ROLE-007 và ROLE-005 khác (Q62), thiếu ROLE-005 khác thì ops_alerts no_recipient",
+        "Sau duyệt: 差額記録 ghi vào ngày gốc được, hôm nay reopened nhận giao dịch mới, ngày reopened cũ không nhận giao dịch mới (Q85); chốt lại thành công; mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả",
+        "Kiểm payload day_reopen_requested và day_reopen_decided đúng bốn khóa, request_id là yêu cầu vừa tạo hoặc vừa quyết, không có lý do hay tên người"
+      ],
+      "depends": [
+        "E05-FE-01d",
+        "E04-BE-03",
+        "E03-BE-02"
+      ]
+    },
+    {
+      "key": "E05-QA-03",
+      "type": "qa",
+      "special": "締め chốt sổ, không chốt khi còn pending (ADR-005, ADR-015)",
+      "title": "QA đồng thời: advisory day-state, tranh khóa với giao dịch, không deadlock",
+      "goal": "Kiểm thử hai phiên trên PostgreSQL cho ba RPC đổi trạng thái ngày.",
+      "specs": [
+        "CLS_DAY_CLOSE_TECH §5 (đồng thời)",
+        "CLS_DAY_REOPEN_TECH §5 (đồng thời, hai phiên M4)",
+        "ADR-005 R10"
+      ],
+      "dod": [
+        "Chốt ngày D+1 đua với yêu cầu hoặc duyệt mở ngày D: luôn nối đuôi, không 40P01; chốt D+1 trước thì yêu cầu D nhận DAY_REOPEN_NOT_ALLOWED, yêu cầu D đã pending thì duyệt D bị DAY_REOPEN_NOT_ALLOWED còn từ chối vẫn chạy; yêu cầu hoặc duyệt D chạy trước thì D+1 vẫn chốt được (Q52)",
+        "Chốt đua với giao dịch theo ma trận: rpc_trade_create vào trước thì close thấy pending mới và trả PENDING_TRADES_EXIST; close vào trước (ngày không pending) thì create nhận DAY_LOCKED; rpc_trade_confirm của pending cuối cùng vào trước thì confirm thành công rồi close thấy 0 pending và cũng thành công (cả hai 200); close thấy pending trước thì PENDING_TRADES_EXIST; mọi thứ tự: không 5xx, bất biến \"ngày locked không có giao dịch pending\", không deadlock; duyệt đua với rpc_trade_confirm và rpc_adjustment_decide không deadlock; lặp 100 lần hai thứ tự kèm tải giao dịch song song (kiểm pg_stat_activity và log 40P01)",
+        "Hai yêu cầu song song thì đúng một dòng pending; hai quyết định song song thì đúng một thành công; mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả"
+      ],
+      "depends": [
+        "E05-BE-03",
+        "E05-BE-04",
+        "E05-BE-05",
+        "E03-BE-04",
+        "E04-BE-03"
+      ]
+    },
+    {
+      "key": "E05-QA-04",
+      "type": "qa",
+      "special": "khóa ngày hai lớp (F-018): miễn cho cập nhật và đóng tranh chấp (cổng G3)",
+      "title": "QA đầu cuối: tranh chấp (tạo, cập nhật, đóng, ngày khóa)",
+      "goal": "Kiểm thử vòng đời tranh chấp và quy tắc cổng G3.",
+      "specs": [
+        "FR-CLS-003",
+        "CLS_DB (Trigger)",
+        "CLS_DISPUTE_DETAIL_SPEC §6 A1..A5"
+      ],
+      "dod": [
+        "Tạo đủ trường thì open kèm mã DSP-NNNNNN và thông báo dispute_opened; thiếu trường, quá độ dài, tệp sai loại hoặc quá cỡ bị từ chối; cập nhật lần đầu thì in_progress, mỗi cập nhật một dòng lịch sử; đóng thiếu kết quả bị từ chối",
+        "Ngày ghi nhận đã locked: tranh chấp cũ vẫn cập nhật và đóng được; tạo mới khi ngày hiện tại locked hoặc reopen_requested nhận DAY_LOCKED (S-024 hiện, S-026 và S-027 khóa nút theo SYS_ME); ngày reopened cho tạo",
+        "Đã đóng: UPDATE hoặc DELETE bằng SQL tay của service_role bị chặn bởi trigger; API ghi (cập nhật, đóng lần nữa) trả INVALID_STATE; CLS_DISPUTE_GET vẫn trả 200 kèm final_result, closed_by_name, closed_at và lịch sử (khóa response của CLS_DISPUTE_GET), CLS_DISPUTE_LIST lọc closed hoặc all vẫn trả hồ sơ đã đóng; hai ROLE-005 cùng đóng thì đúng một thành công; tranh chấp không bao giờ đổi trades, lots, bút toán; mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả",
+        "Cập nhật đua với đóng: update trước thì dòng lịch sử được ghi trước rồi close thành công; close trước thì update nhận INVALID_STATE và không thêm dòng lịch sử"
+      ],
+      "depends": [
+        "E05-FE-03b",
+        "E05-FE-02"
+      ]
+    },
+    {
+      "key": "E05-CLR-01",
+      "type": "clarify",
+      "title": "Làm rõ: giờ phát cảnh báo 'còn giao dịch chờ chốt hoặc chưa chốt sổ' (Q21)",
+      "goal": "ADR-015 §4 yêu cầu cảnh báo trước giờ chốt nhưng không có job hay màn nào định nghĩa; Q21 giao Tech Lead chốt ở LAB-5.",
+      "specs": [
+        "REQ-001 §8 Q21 (open)",
+        "ADR-015 §4",
+        "CLS_DAY_CLOSE_TECH (Câu hỏi mở Q21)"
+      ],
+      "dod": [
+        "Có quyết định được người có thẩm quyền chấp nhận: có làm hay không, giờ phát, người nhận (ROLE-003, ROLE-005), kênh (in-app theo F-030 hay loại sự kiện mới) và cơ chế (job định kỳ hay sự kiện)",
+        "Nếu làm: ghi vào PREMISE (mục Thêm) và tạo issue triển khai ở E-08 hoặc E-05; nếu không: ghi rõ rủi ro ROLE-003 vắng mặt ở báo cáo tiến độ",
+        "Không tự bịa giờ hay cơ chế khi chưa có quyết định"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E05-CLR-02",
+      "type": "clarify",
+      "title": "Làm rõ: tranh chấp phát hiện sau 締め gắn vào ngày nào, tham chiếu giao dịch gốc thế nào (Q32)",
+      "goal": "REQ-001 §8 ghi Q32 đã trả lời 'gắn vào ngày mở kế tiếp, có tham chiếu giao dịch gốc' nhưng spec còn thiết kế chặn tạo (DAY_LOCKED) và không có cột tham chiếu giao dịch.",
+      "specs": [
+        "REQ-001 §8 Q32 (resolved, chờ khách xác nhận)",
+        "CLS_DB §4.1, Câu hỏi mở Q32",
+        "CLS_DISPUTE_LIST_SPEC §6 A1, OQ-1",
+        "CLS_DISPUTE_DETAIL_SPEC §6 A2, F-2, F-3"
+      ],
+      "dod": [
+        "Có quyết định về cách hiểu: (a) giữ chặn tạo tới khi có ngày mở kế tiếp (đúng hiện tại, 'gắn' nghĩa là tạo vào ngày mở kế tiếp), hay (b) cho tạo ngay khi ngày hiện tại đã khóa và gắn vào ngày mở kế tiếp; ghi vào PREMISE",
+        "Có quyết định về 'tham chiếu giao dịch gốc': thêm cột hoặc bảng liên kết, hay giữ chuỗi tự do ở subject_description (hiện F-2 chỉ trích mã TX-NNNNNN từ văn bản)",
+        "Báo lại E05-DB-01, E05-BE-06, E05-FE-02, E05-FE-03a để cập nhật DoD; không tự thêm cột khi chưa có quyết định"
+      ],
+      "depends": []
+    }
+  ]
+}

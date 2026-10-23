@@ -1,0 +1,1215 @@
+{
+  "epic": {
+    "key": "E-09",
+    "title": "E-09 Báo cáo và kiểm toán (reports-audit)",
+    "goal": "Sinh 12 báo cáo cố định, tải CSV và zip, đẩy RPT-06 sang kế toán qua SFTP, tra cứu nhật ký kiểm toán, kiểm chuỗi băm hằng ngày và tra lịch sử áp dụng tỷ lệ.",
+    "specs": [
+      "FR-RPA-001..007",
+      "design/reports-audit",
+      "RPA_DB",
+      "AUDIT_DB",
+      "ADR-007",
+      "ADR-008"
+    ],
+    "out_of_scope": [
+      "Di trú dữ liệu ban đầu: loader, bảng migration_*, schema migration_staging, RPA_MIGRATION_* (E-11, FR-RPA-008)",
+      "Ghi audit: bảng audit_logs, write_audit, trigger chặn sửa xóa, thu quyền, script nối chuỗi dữ liệu cũ (E-10)",
+      "Bảng outbox_events, ops_alerts, danh mục sự kiện, pg_cron và pg_net (E-10); worker gửi và thử lại (E-08, chỉ gọi hai hàm worker_report_generate và worker_sftp_result)",
+      "Gửi thật tệp lên SFTP và email mốc băm (E-08, E08-BE-08d và E08-BE-08b)",
+      "Báo cáo tùy chỉnh, bộ lọc nội dung báo cáo, nút gửi lại SFTP thủ công, WORM ngoài DB, xuất CSV audit",
+      "Tính 完納奨励金, bảng incentive_results và quản lý phiên bản tỷ lệ (E-06); chỉ đọc để báo cáo và tra cứu"
+    ]
+  },
+  "issues": [
+    {
+      "key": "E09-DOC-01",
+      "type": "doc",
+      "parent_of": [
+        "E09-DOC-01a",
+        "E09-DOC-01b"
+      ],
+      "title": "Soạn API Design (BM-2-901-52) cho nhóm API reports-audit",
+      "goal": "Soạn API Design cho 7 API và hợp đồng 3 job, chia 2 sub-issue (báo cáo và SFTP; kiểm toán và tỷ lệ).",
+      "specs": [
+        "api-list §2.10 RPA và §3 (RPA_JOB_*)",
+        "api-design/_index (L5)",
+        "BM-2-901-52",
+        "PREMISE (mục Thêm: API Design)"
+      ],
+      "dod": [
+        "Hoàn thành khi 2 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E09-DOC-01a",
+      "type": "doc",
+      "title": "API Design: báo cáo, tải, zip, SFTP và hợp đồng hai job báo cáo (4 API, 2 job)",
+      "goal": "RPA_REPORT_LIST, RPA_REPORT_DOWNLOAD, RPA_REPORT_DOWNLOAD_ALL, RPA_SFTP_EXPORT_LIST, RPA_JOB_REPORT_GENERATE, RPA_JOB_SFTP_PUSH.",
+      "specs": [
+        "api-list RPA_REPORT_LIST, RPA_REPORT_DOWNLOAD, RPA_REPORT_DOWNLOAD_ALL, RPA_SFTP_EXPORT_LIST, §3 hai job",
+        "RPA_DAILY_REPORTS_SPEC, RPA_MONTHLY_REPORTS_SPEC, RPA_EXPORT_CENTER_SPEC §4.3",
+        "RPA_DB §4.1, §4.2, §4.11",
+        "BM-2-901-52"
+      ],
+      "dod": [
+        "Mỗi API một file {API_ID}_API.md theo mẫu BM-2-901-52: request, response, quyền (ROLE-005; RPA_SFTP_EXPORT_LIST thêm ROLE-007), mã lỗi, liên kết SPEC",
+        "Chốt khóa response (đề xuất của SPEC): RPA_REPORT_LIST chế độ daily (days[] gồm business_day_id, business_date, day_status, locks[]; selected; items[] tối đa 9) và monthly (months[], selected_month, items[], rpt12_history[], rpt12_next_cursor với section=rpt12 và cursor), RPA_REPORT_DOWNLOAD ({url, expires_at}), RPA_REPORT_DOWNLOAD_ALL ({url, expires_at, included, skipped}), RPA_SFTP_EXPORT_LIST (16 cột của view, next_cursor)",
+        "Chốt hợp đồng hai job: worker_report_generate (đầu vào là sự kiện business_day_locked với payload business_day_id, business_date, lock_id, lock_no hoặc rule_version_activated; đầu ra là các dòng report_runs và CSV; phát report_rpt06_ready khi RPT-06 thành công) và worker_sftp_result (đầu vào kết quả một lần đẩy, đầu ra sftp_exports); khớp hợp đồng handler của E08-DOC-01b và E06-DOC-01a",
+        "Chốt quy tắc: ngày mặc định và lần khóa mặc định (SPEC A1), định nghĩa tháng đã khóa (SPEC A2), keyset của rpt12_history, tham số sai thì VALIDATION; ghi rõ chỗ hở về xác định ngày nghiệp vụ cuối tháng (xem E09-CLR-06) và về bộ báo cáo của lần khóa từ 2 trở đi (xem E09-CLR-02)",
+        "Chốt quy tắc đặt tên tệp CSV và zip, thời hạn signed URL (chờ E09-CLR-03) và định dạng batch code, tên tệp SFTP (chờ E09-CLR-01)",
+        "Chốt quy tắc nguồn của từng báo cáo theo mốc locked_at (giao dịch, bút toán, ngày ghi sổ), tách bút toán sau khóa theo ngày ghi sổ; ghi chỗ hở: RPC đối soát E-05 và view trade_effective_values chỉ có giá trị hiện tại",
+        "Chốt hiển thị tháng đã sinh rồi bị 締め再開 ở ngày cuối tháng (MONTHLY A2 ghi báo cáo cũ vẫn hiện, Element E-8 ghi ẩn ba dòng khi chưa khóa)",
+        "Chốt định nghĩa hạn 11:00 JST (FR-RPA-001 AC5) cho khóa ngày sau 11:00 và cho lần khóa lại",
+        "Chốt đầy đủ envelope sự kiện report_rpt06_ready theo OUTBOX_DB §4.1.1: is_critical false, max_attempts 4, dedup_key report_rpt06_ready:{report_run_id}, payload chỉ định danh lượt báo cáo (không có host, khóa hay nội dung CSV); chốt ordering và cursor (started_at, id) của rpt12_history",
+        "Chốt ranh giới điều phối của job báo cáo: thành phần ở worker gọi các RPC theo từng báo cáo trong giao dịch riêng, bước ghi failed ngoài giao dịch đã hỏng, cách tổng hợp kết quả trả cho E-08 (worker_report_build, worker_report_mark_failed, hợp đồng đầu vào và đầu ra)",
+        "Chốt ngày SLA của mốc 11:00 JST cho khóa thông thường, khóa muộn, khóa lại và ngày nghỉ; nếu chọn 'ngày làm việc kế tiếp' thì ghi là giả định cần người có thẩm quyền xác nhận (REQ chỉ ghi trước 11:00 JST)"
+      ],
+      "depends": [
+        "E09-CLR-01",
+        "E09-CLR-02",
+        "E09-CLR-03",
+        "E09-CLR-06"
+      ],
+      "parent": "E09-DOC-01"
+    },
+    {
+      "key": "E09-DOC-01b",
+      "type": "doc",
+      "title": "API Design: tra cứu kiểm toán, lượt kiểm chuỗi băm, lịch sử tỷ lệ và hợp đồng job kiểm chuỗi (3 API, 1 job)",
+      "goal": "RPA_AUDIT_SEARCH, RPA_AUDIT_VERIFY_LIST, RPA_RATE_HISTORY_LIST, RPA_JOB_AUDIT_VERIFY.",
+      "specs": [
+        "api-list RPA_AUDIT_SEARCH, RPA_AUDIT_VERIFY_LIST, RPA_RATE_HISTORY_LIST, §3 RPA_JOB_AUDIT_VERIFY",
+        "RPA_AUDIT_LOG_SEARCH_SPEC §4.3, RPA_RATE_VERSION_HISTORY_SPEC §4.3",
+        "RPA_AUDIT_HASH_CHAIN_TECH §3, §4.3..§4.5",
+        "AUDIT_DB §4.1, §4.2",
+        "BM-2-901-52"
+      ],
+      "dod": [
+        "Mỗi API một file {API_ID}_API.md: RPA_AUDIT_SEARCH (query tradeCode, businessDate, participantId, actionGroup, limit, cursor; 19 khóa mỗi dòng từ id đến hash_version), RPA_AUDIT_VERIFY_LIST (limit, cursor; 11 khóa), RPA_RATE_HISTORY_LIST (hai chế độ, đúng một tham số tradeCode hoặc businessDate; khóa trade, results[], rate_version_unknown, current_rate_version_code, versions[])",
+        "Chốt bảng nhóm loại thao tác (5 nhóm của F-4) sang danh sách action của AUDIT_DB §4.1.1 và cách ghép mã giao dịch với bản ghi liên quan (lot, giao hàng, điều chỉnh của giao dịch đó) theo kết quả E09-CLR-05; chốt độ dài tối đa mã giao dịch (OQ-3)",
+        "Chốt đường ghi cảnh báo khi không xác định được phiên bản tỷ lệ (FR-RPA-006 AC3): hàm rate_history_trade giữ stable để đọc, còn cảnh báo rate_version_unknown do route gọi hàm ghi riêng (khóa chống trùng theo trade_id, chưa xác nhận) vì E-06 chỉ cảnh báo rate_version_missing theo lần khóa và rate_version_unknown khi duyệt bút toán, và dữ liệu di trú không chạy job thưởng (Q66); ghi chỗ hở: SPEC A3 nói GET ghi alert nhưng RPA_DB §6 chọn hàm stable (OQ-5)",
+        "Chốt hợp đồng job RPA_JOB_AUDIT_VERIFY (audit_verify_chain): lịch 17:00 UTC (02:00 JST) và giám sát 14:30 UTC (23:30 JST) (Q65 đã chốt), ghi lượt, cảnh báo, hợp đồng sự kiện audit_anchor_daily (payload run_id, to_seq, head_hash dạng hex, result, finished_at; dedup_key audit_anchor_daily:{run_id}); khớp E08-DOC-01b",
+        "Chốt envelope sự kiện: audit_chain_alert is_critical true, max_attempts 4, dedup_key audit_chain_alert:{run_id} hoặc audit_chain_alert:missed:{business_date} (ngày JST), payload run_id hoặc business_date, không dùng mặc định max_attempts 1; audit_anchor_daily is_critical false, max_attempts 3; chốt cách tách giao dịch của job kiểm chuỗi (begin commit riêng, kiểm REPEATABLE READ, kết thúc riêng) và ordering (started_at, id) của danh sách lượt kiểm"
+      ],
+      "depends": [
+        "E09-CLR-04",
+        "E09-CLR-05"
+      ],
+      "parent": "E09-DOC-01"
+    },
+    {
+      "key": "E09-DB-01",
+      "type": "db",
+      "title": "Migration report_runs: lượt sinh báo cáo, khóa idempotent theo kỳ",
+      "goal": "Một dòng cho mỗi (báo cáo, lần khóa hoặc tháng hoặc phiên bản); trạng thái, CSV, batch code.",
+      "specs": [
+        "RPA_DB §4.1, §5",
+        "FR-RPA-001..003",
+        "ADR-007 R6",
+        "Q26, Q43 (đã chốt)"
+      ],
+      "dod": [
+        "Cột theo RPA_DB §4.1: id, report_code (CHECK RPT-01 đến RPT-12), period_kind (CHECK daily, monthly, event; daily gắn RPT-01..09, event chỉ RPT-12), business_day_id, lock_id, period_month (ngày 1 của tháng), rule_version_id, status (CHECK running, succeeded, failed, skipped_no_source; mặc định running), batch_code (duy nhất, chỉ RPT-06), csv_object_path, row_count, total_amount NUMERIC(18,3), started_at, finished_at, error_message",
+        "CHECK theo loại kỳ: (period_kind = daily) bằng (lock_id không rỗng) và daily bắt buộc business_day_id; monthly bắt buộc period_month; event bắt buộc rule_version_id; ba chỉ mục duy nhất một phần report_runs_daily_uq (report_code, lock_id), report_runs_monthly_uq (report_code, period_month), report_runs_event_uq (report_code, rule_version_id) để chạy lại ghi đè chứ không nhân đôi; chỉ mục report_runs_day_code_idx (business_day_id, report_code)",
+        "Ba khóa ngoại ON DELETE RESTRICT tới business_days, business_day_locks, rule_versions; RLS bật, SELECT chỉ ROLE-005 (cần aal2); không grant ghi cho authenticated, worker ghi qua hàm security definer đã thu execute khỏi authenticated (ADR-002 R8)",
+        "Không lưu lịch sử từng lượt sinh lỗi (Q43: đủ cảnh báo vận hành và audit); total_amount là số nguyên JPY sau floor (có thể âm với RPT-08), cột nguồn không đổi (Q26)",
+        "Cột source_event_id BIGINT rỗng được (khóa ngoại outbox_events, ON DELETE RESTRICT) ghi sự kiện outbox sinh ra dòng báo cáo lần gần nhất, để phân biệt thử lại cùng sự kiện với sự kiện mới (sửa thiết kế RPA_DB, ghi PREMISE)"
+      ],
+      "depends": [
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05",
+        "E01-BE-06"
+      ]
+    },
+    {
+      "key": "E09-DB-02",
+      "type": "db",
+      "title": "Migration sftp_exports và view sftp_exports_status: trạng thái đẩy SFTP RPT-06",
+      "goal": "Trạng thái cuối của việc đẩy RPT-06, và view gộp ba bảng cho ROLE-005 và ROLE-007.",
+      "specs": [
+        "RPA_DB §4.2, §4.11, §5",
+        "FR-RPA-003 AC2, AC3",
+        "ADR-007 R6, R7, R9",
+        "NFR-SEC-04"
+      ],
+      "dod": [
+        "sftp_exports theo RPA_DB §4.2: id, report_run_id (duy nhất, khóa ngoại report_runs), outbox_event_id (duy nhất, khóa ngoại outbox_events), remote_file_name, status (CHECK pending, sent, failed; mặc định pending), sent_at, last_error (không chứa host hay khóa), updated_at; hai khóa ngoại ON DELETE RESTRICT; chỉ dòng của RPT-06 (worker bảo đảm, CHECK không tham chiếu được bảng khác)",
+        "RLS sftp_exports: SELECT cho ROLE-005 và ROLE-007; ghi chỉ qua worker_sftp_result (security definer, thu execute khỏi authenticated)",
+        "View sftp_exports_status chạy quyền chủ (security definer, không dùng security_invoker), 16 cột (id, report_run_id, business_day_id, lock_id, batch_code, remote_file_name, status, sent_at, last_error, attempt_count, max_attempts, next_attempt_at, outbox_status, business_date, lock_no, updated_at), lọc role trong view bằng has_role ROLE-005 hoặc ROLE-007; batch_code chỉ ROLE-005 (ROLE-007 nhận null); thiếu aal2 thì get_my_role() null và trả 0 dòng; grant select cho authenticated; không chứa host hay khóa SFTP",
+        "Lý do dùng view: RLS report_runs chỉ ROLE-005 và RLS outbox_events chỉ ROLE-007 nên không join được bằng JWT; kiểm cả hai vai trò đọc đúng cột và đúng số dòng"
+      ],
+      "depends": [
+        "E09-DB-01",
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03",
+        "E01-BE-06"
+      ]
+    },
+    {
+      "key": "E09-DB-03",
+      "type": "db",
+      "title": "Migration audit_verification_runs: lượt kiểm chuỗi băm",
+      "goal": "Kết quả job kiểm chuỗi băm hằng ngày và mốc băm đầu chuỗi gửi ra ngoài DB.",
+      "specs": [
+        "AUDIT_DB §4.2, RLS",
+        "FR-RPA-007 AC3",
+        "ADR-008 R4, R6, R7"
+      ],
+      "dod": [
+        "Cột theo AUDIT_DB §4.2: id (identity always), started_at, finished_at (rỗng khi đang chạy hoặc job chết), from_seq, to_seq, records_checked (mặc định 0), result (CHECK ok, mismatch, broken, error; rỗng khi đang chạy), first_bad_seq (CHECK bắt buộc khi mismatch hoặc broken), head_hash BYTEA 32, anchor_outbox_event_id (khóa ngoại outbox_events, duy nhất, rỗng được nhiều dòng), error_message",
+        "Chỉ mục audit_verification_runs_started_at_idx (started_at) cho màn xem lượt mới nhất và kiểm hôm nay chưa chạy; chỉ mục duy nhất anchor_outbox_event_id; khóa ngoại ON DELETE NO ACTION",
+        "RLS: SELECT cho ROLE-005 và ROLE-007 (cần aal2); ghi chỉ qua audit_verify_chain() (security definer, thu execute khỏi authenticated, ADR-002 R8); không ghi audit cho chính lượt kiểm (tránh job tự kéo dài chuỗi)"
+      ],
+      "depends": [
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03",
+        "E01-BE-06"
+      ]
+    },
+    {
+      "key": "E09-BE-01",
+      "type": "be",
+      "parent_of": [
+        "E09-BE-01a",
+        "E09-BE-01b"
+      ],
+      "title": "RPA_REPORT_LIST: danh sách ngày, tháng, báo cáo và lịch sử RPT-12",
+      "goal": "Một route đọc báo cáo hai chế độ (daily, monthly), chia 2 sub-issue.",
+      "specs": [
+        "api-list RPA_REPORT_LIST",
+        "RPA_DAILY_REPORTS_SPEC §4.3, §6",
+        "RPA_MONTHLY_REPORTS_SPEC §4.3, §6"
+      ],
+      "dod": [
+        "Hoàn thành khi 2 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E09-BE-01a",
+      "type": "be",
+      "special": "MFA",
+      "title": "RPA_REPORT_LIST chế độ daily: ngày, lần khóa và chín báo cáo",
+      "goal": "Trả days[] 60 ngày gần nhất, lần khóa mặc định và items[] của lần khóa chọn.",
+      "specs": [
+        "api-list RPA_REPORT_LIST (daily)",
+        "RPA_DAILY_REPORTS_SPEC §4.3, §6 A1, A2",
+        "FR-RPA-001 AC1, AC3",
+        "Q14 (đã chốt)"
+      ],
+      "dod": [
+        "Route GET /api/reports: 401, 403 (chỉ ROLE-005), MFA_REQUIRED khi chưa aal2; period bắt buộc là daily hoặc monthly, sai thì VALIDATION; dayId hoặc lockId không phải số, không thuộc 60 ngày, hoặc lockId không thuộc dayId thì VALIDATION (SPEC) hoặc NOT_FOUND khi đã hợp lệ về định dạng nhưng không tồn tại; chốt cặp mã ở E09-DOC-01a",
+        "days[] gồm business_day_id, business_date (ISO), day_status, locks[] (lock_id, lock_no, locked_at, unlocked_at) cho 60 ngày gần nhất, đọc business_days và business_day_locks qua hàm hoặc view cho ROLE-005; selected mặc định là ngày có lần khóa mới nhất (locked_at lớn nhất) và lần khóa có lock_no lớn nhất của ngày đó; chưa có lần khóa nào thì chọn ngày nghiệp vụ hiện tại và items rỗng",
+        "items[] tối đa 9 dòng của lock_id đã chọn (report_runs với period_kind daily, qua chỉ mục report_runs_daily_uq): id, report_code, status, row_count, total_amount, batch_code, started_at, finished_at; không trả csv_object_path và error_message; lần khóa đã mở lại (unlocked_at khác rỗng) vẫn trả báo cáo cũ (bộ cũ giữ làm hồ sơ)",
+        "Chỉ đọc, không ghi audit; thời gian phản hồi đo được ở E09-QA-02"
+      ],
+      "depends": [
+        "E09-DB-01",
+        "E09-DOC-01a",
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06"
+      ],
+      "parent": "E09-BE-01"
+    },
+    {
+      "key": "E09-BE-01b",
+      "type": "be",
+      "special": "MFA",
+      "title": "RPA_REPORT_LIST chế độ monthly: tháng, ba báo cáo tháng và lịch sử RPT-12",
+      "goal": "Trả months[] 24 tháng, items[] của tháng chọn và rpt12_history[] có keyset.",
+      "specs": [
+        "api-list RPA_REPORT_LIST (monthly)",
+        "RPA_MONTHLY_REPORTS_SPEC §4.3, §6 A1..A3",
+        "FR-RPA-002 AC1, AC2",
+        "Q51 (đã chốt)"
+      ],
+      "dod": [
+        "Cùng quyền và lỗi như chế độ daily; month có dạng YYYY-MM, ngoài 24 tháng gần nhất hoặc sai định dạng thì VALIDATION",
+        "months[] gồm month, is_closed, last_business_date, last_closed_at; tháng đã khóa theo SPEC A2: tháng đã kết thúc theo JST và ngày nghiệp vụ có business_date lớn nhất trong tháng ở trạng thái locked; ngày cuối tháng bị 締め再開 thì is_closed false cho tới khi chốt lại nhưng items vẫn trả báo cáo cũ đã sinh (khác tháng chưa từng sinh có items rỗng); tháng mặc định là tháng gần nhất đã khóa, chưa có thì tháng hiện tại (JST)",
+        "items[] là các dòng period_kind monthly của period_month đã chọn (RPT-10, 11, 12): id, report_code, period_month, status, row_count, started_at, finished_at; rpt12_history[] gồm RPT-12 monthly của tháng và RPT-12 event có rule_versions.effective_from trong tháng (id, period_kind, started_at, status, rule_version gồm version_code và effective_from, null với monthly), sắp (started_at, id) giảm dần, keyset theo cặp 20 dòng, rpt12_next_cursor (cursor sai thì VALIDATION), tải thêm bằng section=rpt12 và cursor",
+        "RPT-12 event chỉ của phiên bản tỷ lệ (incentive_rate), không của 業務規程 (Q51 đã chốt); tháng chưa khóa vẫn trả rpt12_history của tháng"
+      ],
+      "depends": [
+        "E09-DB-01",
+        "E09-DOC-01a",
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06"
+      ],
+      "parent": "E09-BE-01"
+    },
+    {
+      "key": "E09-BE-02",
+      "type": "be",
+      "special": "MFA",
+      "title": "RPA_REPORT_DOWNLOAD: cấp signed URL tải CSV một báo cáo",
+      "goal": "Cấp signed URL ngắn hạn cho csv_object_path của một lượt báo cáo thành công.",
+      "specs": [
+        "api-list RPA_REPORT_DOWNLOAD",
+        "FR-RPA-003 AC1",
+        "NFR-SEC-04",
+        "RPA_DB §5"
+      ],
+      "dod": [
+        "Route GET /api/reports/[runId]/download: 401, 403 (chỉ ROLE-005; ROLE-007 gọi thì FORBIDDEN), MFA_REQUIRED; runId không phải số nguyên từ 1 thì VALIDATION; không có lượt thì NOT_FOUND; status khác succeeded thì INVALID_STATE kèm trạng thái hiện tại để FE hiển thị",
+        "Trả {url, expires_at} từ csv_object_path trong bucket riêng tư; thời hạn URL theo quyết định ở E09-CLR-03 (không đặt số khi chưa chốt); tên tệp tải về theo quy tắc ở E09-CLR-03; URL không dùng được sau hạn và có thể xin lại",
+        "Cho phép tải bộ báo cáo của lần khóa đã mở lại (hồ sơ cũ giữ); không ghi audit (thao tác chỉ đọc theo FR-RPA-004 AC3); không ghi đường dẫn Storage hay URL vào log"
+      ],
+      "depends": [
+        "E09-DB-01",
+        "E09-DOC-01a",
+        "E09-CLR-03",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06",
+        "E10-STO-01"
+      ]
+    },
+    {
+      "key": "E09-BE-03",
+      "type": "be",
+      "special": "MFA",
+      "title": "RPA_REPORT_DOWNLOAD_ALL: gom các báo cáo thành công của một kỳ thành tệp zip",
+      "goal": "Một zip cho một kỳ (lần khóa hoặc tháng); báo cáo thiếu nguồn hoặc lỗi nằm ở skipped.",
+      "specs": [
+        "api-list RPA_REPORT_DOWNLOAD_ALL",
+        "FR-RPA-001 AC3, FR-RPA-003 AC1",
+        "RPA_DAILY_REPORTS_SPEC A5",
+        "RPA_EXPORT_CENTER_SPEC A5",
+        "DQ-20"
+      ],
+      "dod": [
+        "Route GET /api/reports/download-all: 401, 403 (chỉ ROLE-005), MFA_REQUIRED; đúng một kỳ mỗi lần: period=daily phải có lockId, period=monthly phải có month, thiếu hoặc sai thì VALIDATION; lần khóa hoặc tháng không tồn tại thì NOT_FOUND; kỳ không có báo cáo succeeded thì INVALID_STATE",
+        "Zip chứa mỗi báo cáo succeeded một tệp CSV riêng; failed và skipped_no_source không chặn mà liệt kê ở skipped (report_code, status); trả {url, expires_at, included, skipped}; zip tháng gồm RPT-10, 11, 12 của tháng và mọi RPT-12 event có effective_from trong tháng (cùng phạm vi rpt12_history)",
+        "Còn báo cáo đang running thì vẫn tạo zip từ phần đã succeeded và liệt kê phần đang chạy ở skipped (FE khóa nút, API vẫn phải đúng); tệp zip lưu ở Storage riêng tư, có hạn dọn, signed URL theo E09-CLR-03; tải ngày và tháng là hai lần gọi (chưa có tham số nhận cả hai, câu hỏi QA-10 trong api-list)"
+      ],
+      "depends": [
+        "E09-DB-01",
+        "E09-DOC-01a",
+        "E09-CLR-03",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06",
+        "E10-STO-01"
+      ]
+    },
+    {
+      "key": "E09-BE-04",
+      "type": "be",
+      "special": "MFA",
+      "title": "RPA_SFTP_EXPORT_LIST: lịch sử và trạng thái đẩy SFTP RPT-06",
+      "goal": "Đọc view sftp_exports_status cho ROLE-005 và ROLE-007, lọc lockId, keyset.",
+      "specs": [
+        "api-list RPA_SFTP_EXPORT_LIST",
+        "RPA_EXPORT_CENTER_SPEC §4.3, §6",
+        "RPA_DB §4.11",
+        "FR-RPA-003 AC2, AC3"
+      ],
+      "dod": [
+        "Route GET /api/sftp-exports: 401, 403 (ngoài ROLE-005 và ROLE-007), MFA_REQUIRED; query lockId (tùy chọn, số nguyên), limit, cursor; sai thì VALIDATION",
+        "items[] gồm id, report_run_id, business_day_id, lock_id, batch_code (null với ROLE-007), remote_file_name, status, sent_at, last_error, attempt_count, max_attempts, next_attempt_at, outbox_status, business_date, lock_no, updated_at; sắp ngày nghiệp vụ giảm dần, thêm khóa phụ cho keyset ổn định, 20 dòng mỗi trang, next_cursor",
+        "Quyền cột theo role đúng như view: ROLE-007 không thấy batch_code, không có đường đọc report_runs hay outbox_events; last_error không chứa host hay khóa; chỉ đọc"
+      ],
+      "depends": [
+        "E09-DB-02",
+        "E09-DOC-01a",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06"
+      ]
+    },
+    {
+      "key": "E09-BE-05",
+      "type": "be",
+      "special": "outbox + worker (ADR-007)",
+      "parent_of": [
+        "E09-BE-05a",
+        "E09-BE-05b",
+        "E09-BE-05c",
+        "E09-BE-05d",
+        "E09-BE-05e"
+      ],
+      "title": "RPA_JOB_REPORT_GENERATE: worker_report_generate sinh 12 báo cáo cố định",
+      "goal": "Handler của worker sinh RPT-01..09 sau khóa ngày, RPT-10..12 cuối tháng và RPT-12 khi kích hoạt tỷ lệ, chia 5 sub-issue.",
+      "specs": [
+        "api-list §3 RPA_JOB_REPORT_GENERATE",
+        "FR-RPA-001, FR-RPA-002",
+        "ADR-007 R6, R11",
+        "RPA_DB §3 (luồng báo cáo)"
+      ],
+      "dod": [
+        "Hoàn thành khi 5 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E09-BE-05a",
+      "type": "be",
+      "special": "outbox + worker (ADR-007)",
+      "title": "Báo cáo (a): worker_report_generate, khóa idempotent, trạng thái, ghi CSV và cảnh báo",
+      "goal": "Bộ khung chung: nhận sự kiện, tạo dòng report_runs, ghi CSV vào Storage, chốt trạng thái, thiếu nguồn không chặn báo cáo khác.",
+      "specs": [
+        "api-list §3 RPA_JOB_REPORT_GENERATE",
+        "RPA_DB §4.1",
+        "FR-RPA-001 AC1..AC5",
+        "FR-RPA-003 AC6",
+        "Q26, Q43, Q66 (đã chốt), Q90 (xem E09-CLR-02)",
+        "ADR-007 R6, R11"
+      ],
+      "dod": [
+        "worker_report_generate là bước điều phối ở worker (Edge Function, do handler E08-BE-08d gọi), không phải một hàm SQL duy nhất: đọc sự kiện, xác định danh sách báo cáo cần sinh, rồi gọi từng báo cáo qua RPC security definer worker_report_build(p_event_id, p_report_code) mỗi lần một giao dịch riêng, ghi failed bằng giao dịch riêng sau khi một lời gọi lỗi hoặc rollback, và tổng hợp kết quả trả cho E-08; các RPC DB (worker_report_build, worker_report_mark_failed) là security definer với search_path rỗng, thu execute khỏi PUBLIC, anon và authenticated, chỉ service role gọi (ADR-002 R8); nhận sự kiện business_day_locked (payload business_day_id, business_date, lock_id, lock_no) và rule_version_activated qua handler của E08-BE-08d; sự kiện từ lần khóa source migration không phát sinh (ngày lịch sử nạp bằng di trú không sinh báo cáo, Q66)",
+        "Với mỗi báo cáo cần sinh: upsert report_runs theo khóa idempotent của loại kỳ (chạy lại cùng lần khóa, tháng hoặc phiên bản thì ghi đè, không nhân đôi), đặt running rồi succeeded kèm row_count, total_amount, csv_object_path, finished_at; một báo cáo lỗi hoặc thiếu nguồn không chặn báo cáo khác: thiếu nguồn nghiệp vụ (bảng nguồn chưa có hoặc dữ liệu bắt buộc không có) thì skipped_no_source kèm ops_alerts report_source_missing (khóa nhận diện đủ report_code và kỳ, không trùng) và là trạng thái cuối bình thường; lỗi kỹ thuật (lỗi đọc tạm thời, DB, Storage) thì failed kèm error_message và không được gộp vào thiếu nguồn",
+        "Phạm vi hoàn thành theo sự kiện: thử lại cùng sự kiện (source_event_id của dòng bằng sự kiện đang xử lý) giữ báo cáo đã ở trạng thái cuối và chỉ làm lại báo cáo chưa xong; sự kiện mới (khóa lại, tháng chốt lại, kích hoạt phiên bản khác) tái tạo bộ báo cáo tương ứng: đặt lại running, ghi đè nội dung, trạng thái và source_event_id, kể cả dòng monthly đã succeeded hoặc skipped_no_source từ lần trước; sự kiện cũ giao lại sau sự kiện mới hơn của cùng khóa idempotent không được ghi lùi (so thứ tự sự kiện); Chạy sau job tính thưởng trong cùng sự kiện (tuần tự theo G19, lỗi bước nào thì cả cặp thử lại; hành vi cặp này do E08-BE-08d điều phối); mỗi lần chạy lại một lần khóa đã có kết quả tạo lại đúng một dòng cho mỗi báo cáo (kiểm bằng đếm dòng trước và sau)",
+        "Số tiền trong CSV và total_amount là JPY nguyên: floor(qty × unit_price) từng dòng giao dịch rồi cộng, tổng khớp tổng các dòng CSV (Q26); số âm theo giả định floor về âm vô cực (Q90 chờ E09-CLR-02); ghi CSV vào bucket riêng tư, tệp không chứa dữ liệu cá nhân ngoài cột cần thiết của báo cáo",
+        "Khi RPT-06 thành công: ghi batch_code (duy nhất), chèn sự kiện outbox report_rpt06_ready (dedup_key theo report_run_id) và dòng sftp_exports pending cùng giao dịch (cho E09-BE-06); báo cáo ngày hoàn tất trước 11:00 JST (đo ở E09-QA-01); bộ báo cáo cho lần khóa từ 2 trở đi theo nguyên tắc Q14 đã chốt (giữ bản gốc, không ghi đè kết quả đã chốt, chỉ phần mới và delta), cách thể hiện trên từng báo cáo theo E09-CLR-02",
+        "Mốc cắt nguồn dữ liệu: mọi báo cáo ngày của một lần khóa đọc dữ liệu tại mốc locked_at của chính lần khóa đó, không đọc giá trị hiện tại: giao dịch status confirmed với confirmed_at không muộn hơn locked_at (cùng quy tắc INC_INCENTIVE_CALCULATE_TECH §4.2 bước 1) và giá trị hiệu lực lấy từ bút toán có id lớn nhất trong các bút toán có created_at không muộn hơn locked_at (bước 2); không dùng view trade_effective_values hay RPC đối soát đọc giá trị hiện tại; event của lần khóa 1 xử lý trễ hoặc chạy lại sau khi đã có điều chỉnh hoặc lần khóa 2 vẫn cho cùng nội dung và cùng tổng",
+        "Hợp đồng giao dịch và kết quả handler: mỗi báo cáo ghi trong giao dịch riêng (lỗi hoặc rollback một báo cáo không làm mất trạng thái các báo cáo đã xong); khi mọi báo cáo của sự kiện đều ở trạng thái cuối (succeeded hoặc skipped_no_source) thì handler kết thúc bình thường; còn báo cáo failed vì lỗi kỹ thuật thì handler trả lỗi để E-08 thử lại cả cặp (lần thử lại chỉ làm lại báo cáo chưa ở trạng thái cuối); hết lượt thì E-08 gọi worker_report_mark_failed(sự kiện) (hàm của E09-BE-05a, security definer) để mọi báo cáo chưa ở trạng thái cuối của sự kiện thành failed kể cả khi handler chưa từng chạy được, rồi mới ghi outbox failed và ops_alerts job_failed"
+      ],
+      "depends": [
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03",
+        "E09-DB-01",
+        "E09-DB-02",
+        "E09-DOC-01a",
+        "E09-CLR-02",
+        "E06-DB-01",
+        "E10-STO-01"
+      ],
+      "parent": "E09-BE-05"
+    },
+    {
+      "key": "E09-BE-05b",
+      "type": "be",
+      "special": "outbox + worker (ADR-007)",
+      "title": "Báo cáo (b): RPT-01 giao dịch, RPT-02 lot và log trạng thái, RPT-03 participant hết hạn",
+      "goal": "Ba bộ truy vấn nguồn và CSV đầu tiên của chín báo cáo ngày.",
+      "specs": [
+        "RPA_DAILY_REPORTS_SPEC A4 (RPT-01..03)",
+        "FR-RPA-001 AC1, AC2",
+        "LAB-1 function-34 §4"
+      ],
+      "dod": [
+        "RPT-01 tổng hợp giao dịch theo ngày nghiệp vụ của lần khóa: gồm giao dịch chốt trong ngày tại mốc locked_at, giá trị hiệu lực tại mốc đó tính từ trade_adjustment_entries theo quy tắc mốc cắt của E09-BE-05a (không đọc view trade_effective_values hiện tại), tiền JPY nguyên; các cột chốt ở E09-CLR-02",
+        "RPT-02 lịch sử lot và log trạng thái giao dịch trong ngày: nguồn log trạng thái do E09-CLR-02 chốt (không có bảng log trạng thái giao dịch riêng trong thiết kế); RPT-03 participant đã hết hạn hoặc sắp hết hạn theo căn cứ tham gia (participant_bases, bỏ căn cứ chờ) và ngưỡng ngày của cấu hình participant_expiring của E-08 (không đặt ngưỡng mới; ngưỡng rỗng thì chỉ liệt kê đã hết hạn), tính tại ngày nghiệp vụ của lần khóa (không dùng ngày chạy, để replay ổn định) và dùng lại quy tắc hạn hiệu dụng của E-01; không đồng nhất không hiệu lực (tạm dừng, đang 再審査, chưa tới hiệu lực) với hết hạn",
+        "Mỗi báo cáo ghi row_count đúng số dòng CSV; nguồn rỗng hợp lệ (ngày không có lot) vẫn succeeded với 0 dòng, chỉ thiếu nguồn thật (bảng nguồn chưa có hoặc dữ liệu bắt buộc không có) mới là skipped_no_source; không dùng dữ liệu của ngày khác lần khóa",
+        "Phân loại lỗi như E09-BE-05a: lỗi truy vấn tạm thời, DB hoặc Storage ở một báo cáo của nhóm này là failed (thử lại), không được chuyển thành skipped_no_source"
+      ],
+      "depends": [
+        "E09-BE-05a",
+        "E03-DB-01",
+        "E02-DB-01",
+        "E01-DB-02",
+        "E01-BE-01",
+        "E04-DB-02",
+        "E08-DB-01"
+      ],
+      "parent": "E09-BE-05"
+    },
+    {
+      "key": "E09-BE-05c",
+      "type": "be",
+      "special": "outbox + worker (ADR-007)",
+      "title": "Báo cáo (c): RPT-04 giao hàng tồn đọng, RPT-05 đối soát, RPT-06 xuất kế toán",
+      "goal": "Ba báo cáo ngày liên quan giao hàng và đối soát; RPT-06 mang batch_code và phát sự kiện đẩy SFTP.",
+      "specs": [
+        "RPA_DAILY_REPORTS_SPEC A4 (RPT-04..06)",
+        "FR-RPA-003 AC4, AC6",
+        "Q39 (đã chốt)",
+        "DR-SETTLE-01"
+      ],
+      "dod": [
+        "RPT-04 giao hàng tồn đọng và ngoại lệ: cột số lượng ngoại lệ lấy từ delivery_exceptions.qty (Q39), lần giao lấy từ delivery_parts; chỉ ghi nhận, không cộng vào delivered_qty",
+        "RPT-05 bảng đối soát hằng ngày theo số liệu tại mốc locked_at của lần khóa (tổng giao dịch, đối soát với giao hàng), truy vấn riêng theo quy tắc mốc cắt của E09-BE-05a (không gọi RPC đối soát của E-05 vì RPC đó đọc số liệu tại lúc gọi); RPT-06 có tối thiểu ngày nghiệp vụ, participant, tổng tiền, thuế, trạng thái, batch code (FR-RPA-003 AC4), số tiền floor JPY nguyên; định dạng batch code, mã hóa và các cột còn lại chờ E09-CLR-01",
+        "Mỗi lần khóa có RPT-06 và batch_code riêng (không trùng giữa các lần khóa của cùng ngày, ràng buộc duy nhất); RPT-05 và RPT-06 tính từ cùng một ảnh chụp số liệu để tổng khớp nhau (kiểm bằng so tổng); thiếu nguồn của một báo cáo không chặn hai báo cáo kia",
+        "Replay RPT-06 (giao lại cả cặp sau khi RPT-06 đã gửi): giữ nguyên report_run id, batch_code và remote_file_name, nội dung CSV theo mốc cắt nên không đổi; chèn outbox report_rpt06_ready với ON CONFLICT theo dedup_key (không thêm sự kiện) và sftp_exports với ON CONFLICT theo report_run_id (không lỗi unique, không đưa dòng đã sent hoặc failed về pending)"
+      ],
+      "depends": [
+        "E09-BE-05a",
+        "E07-DB-01",
+        "E07-DB-02",
+        "E07-DB-03",
+        "E09-CLR-01",
+        "E04-DB-02",
+        "E05-DB-01"
+      ],
+      "parent": "E09-BE-05"
+    },
+    {
+      "key": "E09-BE-05d",
+      "type": "be",
+      "special": "outbox + worker (ADR-007)",
+      "title": "Báo cáo (d): RPT-07 kết quả thưởng, RPT-08 log điều chỉnh sau khóa, RPT-09 tranh chấp và SLA",
+      "goal": "Ba báo cáo ngày về 完納奨励金, điều chỉnh sau khóa và tranh chấp.",
+      "specs": [
+        "RPA_DAILY_REPORTS_SPEC A4 (RPT-07..09)",
+        "INC_DB §4.1",
+        "ADJ_DB entries",
+        "Q33 (đã chốt)"
+      ],
+      "dod": [
+        "RPT-07 kết quả 完納奨励金: dòng gốc là incentive_results kind original có lock_id của lần khóa; dòng delta (lock_id rỗng) chọn theo ngày ghi sổ (business_day_id bằng ngày của lần khóa) và bút toán tạo không muộn hơn locked_at, cận dưới cho lần khóa từ 2 trở đi chốt ở E09-CLR-02; kèm phiên bản tỷ lệ và hiệu lực dùng; không lọc delta theo lock_id; chờ bản ghi thưởng của lần khóa (job thưởng đã xong): nếu run chưa succeeded thì xử lý theo hợp đồng cặp (thử lại cả cặp), nếu rate_missing thì RPT-07 là skipped_no_source kèm cảnh báo, không chặn báo cáo khác",
+        "RPT-08 log điều chỉnh sau khóa sổ: đọc trade_adjustment_entries có business_day_id (ngày ghi sổ) là ngày của lần khóa và is_post_lock true (ngày ghi sổ khác ngày giao dịch gốc origin_business_day_id), cận trên locked_at, không dùng created_at sau locked_at làm tiêu chí duy nhất (như vậy loại nhầm bút toán ghi trước khi ngày ghi sổ được chốt); số tiền có thể âm (tổng có thể âm, Q90); RPT-09 tổng hợp tranh chấp và SLA xử lý theo trạng thái; cột SLA chờ quy tắc ở E09-CLR-02 vì F-031 chưa phân tích",
+        "Báo cáo của lần khóa từ 2 trở đi không ghi đè báo cáo của lần khóa trước (khóa idempotent theo lock_id); chạy lại sau khi bù delta chỉ làm đổi bộ của đúng lần khóa đó"
+      ],
+      "depends": [
+        "E09-BE-05a",
+        "E06-DB-01",
+        "E06-DB-02",
+        "E04-DB-02",
+        "E05-DB-01",
+        "E05-DB-02",
+        "E09-CLR-02"
+      ],
+      "parent": "E09-BE-05"
+    },
+    {
+      "key": "E09-BE-05e",
+      "type": "be",
+      "special": "outbox + worker (ADR-007)",
+      "title": "Báo cáo (e): RPT-10, RPT-11, RPT-12 hằng tháng và RPT-12 theo sự kiện kích hoạt tỷ lệ",
+      "goal": "Ba báo cáo tháng khi ngày nghiệp vụ cuối tháng được 締め và một RPT-12 mỗi lần kích hoạt phiên bản tỷ lệ.",
+      "specs": [
+        "RPA_MONTHLY_REPORTS_SPEC §6 A2..A4",
+        "FR-RPA-002 AC1..AC3",
+        "Q51 (đã chốt)",
+        "INC_JOB_RULE_ACTIVATE"
+      ],
+      "dod": [
+        "Điều kiện sinh RPT-10, RPT-11 (theo loại giao dịch 相対取引 và せり) và RPT-12 hằng tháng theo kết quả E09-CLR-06 (cách xác định ngày nghiệp vụ cuối tháng lúc khóa); khóa idempotent theo period_month; ngày cuối tháng bị 締め再開 rồi chốt lại thì sinh lại ghi đè dòng tháng đó",
+        "RPT-12 theo sự kiện: nhận rule_version_activated và chỉ sinh khi phiên bản là incentive_rate (không sinh cho market_rule, Q51); khóa idempotent theo rule_version_id; gán vào tháng theo rule_versions.effective_from; nhận trùng sự kiện không tạo dòng thứ hai",
+        "RPT-10 theo participant và RPT-11 theo loại giao dịch dùng cùng quy tắc làm tròn floor JPY và cùng mốc cắt theo lần khóa: mỗi ngày nghiệp vụ của tháng tính tại locked_at của lần khóa mới nhất tại thời điểm sinh, tập ngày và bút toán chốt ở E09-CLR-02; thiếu nguồn của một báo cáo tháng không chặn báo cáo kia; các cột chốt ở E09-CLR-02"
+      ],
+      "depends": [
+        "E09-BE-05a",
+        "E06-BE-10",
+        "E03-DB-01",
+        "E01-DB-02",
+        "E09-CLR-02",
+        "E09-CLR-06",
+        "E04-DB-02"
+      ],
+      "parent": "E09-BE-05"
+    },
+    {
+      "key": "E09-BE-06",
+      "type": "be",
+      "special": "outbox + worker (ADR-007)",
+      "title": "worker_sftp_result: ghi kết quả đẩy SFTP RPT-06 vào sftp_exports",
+      "goal": "Hàm ghi trạng thái cuối của việc đẩy; E-08 gọi sau mỗi lần thử, phần gửi SFTP thật nằm ở E08-BE-08d.",
+      "specs": [
+        "api-list §3 RPA_JOB_SFTP_PUSH",
+        "RPA_DB §4.2, §5",
+        "FR-RPA-003 AC2, AC3",
+        "ADR-007 R6, R7, R9",
+        "NFR-SEC-04"
+      ],
+      "dod": [
+        "worker_sftp_result là hàm security definer, search_path rỗng, thu execute khỏi PUBLIC, anon và authenticated; nhận outbox_event_id, định danh lần nhận (attempt_count và locked_at tại lúc claim, như E08-BE-08a) và kết quả một lần thử (thành công hoặc lỗi kèm last_error đã làm sạch) và cập nhật sftp_exports: pending, rồi sent kèm sent_at, hoặc failed khi E08 báo hết lượt; mỗi lần ghi cập nhật updated_at",
+        "remote_file_name sinh từ ngày nghiệp vụ và batch code để gửi lặp ghi đè đúng tệp (ADR-007 R7); lần khóa mới của cùng ngày sinh tệp và batch code mới (xử lý tệp cũ phía kế toán chờ E09-CLR-01); chỉ cập nhật khi sftp_exports còn pending và định danh lần nhận khớp lần claim hiện tại; sent hoặc failed là trạng thái cuối không bị đảo (kể cả failed sang sent) và kết quả của lần thử cũ (đã bị claim lại) bị bỏ; hàm được gọi trong cùng giao dịch với worker_outbox_result hoặc finalize_outbox_failed của E08-BE-08a (một giao thức kết thúc duy nhất, kể cả khi thu hồi dòng treo không có callback); last_error không chứa host, khóa hay đường dẫn bí mật",
+        "Khi E08 đánh dấu failed: ghi sftp_exports failed (finalize_outbox_failed của E08-BE-08a, gọi từ E08-BE-08c hoặc từ thu hồi dòng treo, tạo ops_alerts sftp_failed và sự kiện export_failed, E09 không tạo trùng); hợp đồng đầu vào khớp E08-BE-08d; không có đường gửi lại thủ công (LAB-1 #2, ADR-007 R6)"
+      ],
+      "depends": [
+        "E09-DB-02",
+        "E09-BE-05a",
+        "E09-DOC-01a",
+        "E09-CLR-01"
+      ]
+    },
+    {
+      "key": "E09-BE-07",
+      "type": "be",
+      "special": "audit bất biến + hash-chain (ADR-008)",
+      "parent_of": [
+        "E09-BE-07a",
+        "E09-BE-07b"
+      ],
+      "title": "RPA_JOB_AUDIT_VERIFY: audit_verify_chain kiểm toàn chuỗi mỗi ngày và gửi mốc băm",
+      "goal": "Job kiểm chuỗi băm audit_logs hằng ngày, cảnh báo khi lệch hoặc bị lỡ, gửi mốc ra ngoài DB; chia 2 sub-issue.",
+      "specs": [
+        "api-list §3 RPA_JOB_AUDIT_VERIFY",
+        "RPA_AUDIT_HASH_CHAIN_TECH §4.3..§4.5",
+        "FR-RPA-007",
+        "ADR-008 R4..R6",
+        "NFR-AUD-01"
+      ],
+      "dod": [
+        "Hoàn thành khi 2 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E09-BE-07a",
+      "type": "be",
+      "special": "audit bất biến + hash-chain (ADR-008)",
+      "title": "Kiểm chuỗi (a): audit_verify_chain tính lại toàn chuỗi và ghi lượt kiểm",
+      "goal": "Duyệt audit_logs theo chain_seq, tính lại băm bằng hàm chuẩn hóa dùng chung với write_audit, ghi kết quả.",
+      "specs": [
+        "RPA_AUDIT_HASH_CHAIN_TECH §4.3",
+        "AUDIT_DB §4.1, §4.2",
+        "ADR-008 R2, R4",
+        "Q64, Q65 (đã chốt)"
+      ],
+      "dod": [
+        "Hàm audit_verify_chain() security definer với search_path rỗng (tên đủ schema), thu execute khỏi PUBLIC, anon và authenticated, chỉ pg_cron hoặc service role gọi được (ADR-002 R8; HASH §4.3 chỉ ghi hai role, thu thêm PUBLIC và default privileges); pg_cron chạy 17:00 UTC (02:00 JST); giao thức giao dịch: bước bắt đầu chèn dòng audit_verification_runs và commit ngay (giao dịch riêng, như worker_incentive_run_begin) để phiên khác thấy lượt đang chạy; phần kiểm chạy trong giao dịch REPEATABLE READ riêng (không đổi isolation sau khi đã truy vấn); bước kết thúc ghi result, to_seq, head_hash hoặc error trong giao dịch riêng, kể cả khi phần kiểm lỗi hoặc timeout; lượt chết giữa chừng (finished_at rỗng quá hạn) còn lại làm bằng chứng, không tính là lượt kết thúc và do giám sát 23:30 bắt (cách tách giao dịch bằng pg_cron nhiều bước hay Edge Function chốt ở E09-DOC-01b); chạy trong snapshot REPEATABLE READ nên không chờ advisory lock của write_audit và không chặn ghi audit",
+        "Duyệt order by chain_seq bằng con trỏ, tính lại row_hash bằng đúng hàm chuẩn hóa immutable của write_audit (một nguồn duy nhất, hash_version 1); dừng ở lỗi đầu tiên: row_hash tính lại khác row_hash lưu thì mismatch; chain_seq hở hoặc prev_hash khác băm bản trước thì broken; kèm first_bad_seq; from_seq bằng 1, to_seq, records_checked, head_hash",
+        "Đối chiếu thêm với lượt ok, mismatch hoặc broken gần nhất: max(chain_seq) nhỏ hơn to_seq cũ (mất đuôi) hoặc row_hash tại to_seq cũ khác head_hash cũ thì không ok; hash_version không hỗ trợ, exception hoặc hết statement_timeout thì result error kèm error_message (lượt error tính là bỏ lỡ); cho phép nhiều lượt trong một ngày JST (mỗi lượt một dòng, không UNIQUE theo ngày), lượt chạy chồng nhau thì lượt sau chờ hoặc bỏ qua theo hợp đồng DOC-01b và không ghi kết quả của lượt kia, mỗi lượt kết thúc ok, mismatch hoặc broken có đúng một anchor",
+        "Không ghi audit cho chính lượt kiểm; log category job, msg audit.verify ok, mismatch, broken, error kèm durationMs, không ghi before và after; thời gian kiểm toàn chuỗi đo ở quy mô lớn (E09-QA-04) để quyết định có cần chuyển sang kiểm đoạn (Q64)"
+      ],
+      "depends": [
+        "E09-DB-03",
+        "E10-AUD-02",
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03",
+        "E09-DOC-01b"
+      ],
+      "parent": "E09-BE-07"
+    },
+    {
+      "key": "E09-BE-07b",
+      "type": "be",
+      "special": "audit bất biến + hash-chain (ADR-008)",
+      "title": "Kiểm chuỗi (b): cảnh báo khi lệch, mốc băm gửi ngoài DB và giám sát lượt kiểm bị lỡ",
+      "goal": "Lệch thì ops_alerts và sự kiện Critical, xong thì phát audit_anchor_daily, 23:30 JST kiểm có lượt kết thúc trong ngày.",
+      "specs": [
+        "RPA_AUDIT_HASH_CHAIN_TECH §4.3 (bước 4), §4.4, §4.5",
+        "AUDIT_DB (hàm audit_verify_chain, giám sát)",
+        "ADR-008 R5, R6",
+        "Q22 (đã chốt), Q24 (chờ E09-CLR-04)"
+      ],
+      "dod": [
+        "Lượt mismatch hoặc broken chèn ops_alerts audit_chain_mismatch mức critical và outbox audit_chain_alert is_critical true (dedup_key audit_chain_alert:{run_id}) cùng giao dịch với cập nhật lượt kiểm; lượt error không gửi Critical tại chỗ (giám sát bắt)",
+        "Lượt kết thúc ok, mismatch hoặc broken: trong cùng giao dịch chèn outbox audit_anchor_daily (dedup_key audit_anchor_daily:{run_id}, payload run_id, to_seq, head_hash dạng hex, result, finished_at; max_attempts 3) và gán anchor_outbox_event_id; lượt error không gửi mốc; người nhận mốc và email người phụ trách kiểm toán theo E09-CLR-04, gửi do E08-BE-08b",
+        "Giám sát pg_cron 14:30 UTC (23:30 JST): hết ngày JST không có dòng started_at trong ngày với finished_at không rỗng và result thuộc ok, mismatch, broken (lượt error tính là lỡ) thì ops_alerts audit_verification_missed mức critical và outbox audit_chain_alert (dedup_key audit_chain_alert:missed:{business_date}); chạy lại không tạo cảnh báo trùng; hàm giám sát cũng security definer với search_path rỗng và thu execute khỏi PUBLIC, anon, authenticated",
+        "Bước giám sát chỉ đọc audit_verification_runs và chèn cảnh báo; pg_cron ngừng hẳn thì tín hiệu ngoài DB là thiếu email mốc (hợp đồng DOC-01b), không có bước khác bù"
+      ],
+      "depends": [
+        "E09-BE-07a",
+        "E10-OBX-01",
+        "E10-OBX-02",
+        "E10-OBX-03",
+        "E09-CLR-04"
+      ],
+      "parent": "E09-BE-07"
+    },
+    {
+      "key": "E09-BE-08",
+      "type": "be",
+      "special": "audit bất biến + hash-chain (ADR-008)",
+      "title": "RPA_AUDIT_SEARCH: tra cứu nhật ký kiểm toán nhiều điều kiện, chỉ đọc",
+      "goal": "Tìm audit_logs theo mã giao dịch, ngày nghiệp vụ, participant, loại thao tác (AND), keyset.",
+      "specs": [
+        "api-list RPA_AUDIT_SEARCH",
+        "RPA_AUDIT_LOG_SEARCH_SPEC §4.2, §4.3, §6",
+        "FR-RPA-005 AC1..AC4",
+        "AUDIT_DB §4.1 (chỉ mục)",
+        "NFR-PERF-01"
+      ],
+      "dod": [
+        "Route GET /api/audit-logs: 401, 403 (ngoài ROLE-005 và ROLE-007), MFA_REQUIRED; không có điều kiện nào trong tradeCode, businessDate, participantId, actionGroup thì VALIDATION với mã M_RPA_001; tradeCode quá 50 ký tự thì VALIDATION fields.tradeCode (M_COM_010); businessDate sai định dạng hoặc ở tương lai thì VALIDATION; participantId không phải số thì VALIDATION",
+        "Kết hợp AND: tradeCode khớp chính xác trades.trade_code rồi ghép với bản ghi liên quan theo E09-CLR-05; businessDate theo business_day_id; participantId theo participant_id; actionGroup (5 nhóm) theo danh sách action ở E09-CLR-05; chỉ một điều kiện actionGroup vẫn hợp lệ",
+        "items[] gồm id, occurred_at, chain_seq, actor_name, actor_role, action, entity_type, entity_id, entity_label, participant_code, participant_name, business_date, reason, before, after, device_recorded_at, prev_hash và row_hash dạng hex, hash_version; sắp occurred_at giảm dần, khóa phụ chain_seq, keyset 20 dòng, không đếm tổng; không có API đọc một bản ghi (panel chi tiết dùng dòng đã tải)",
+        "Chỉ đọc, không ghi audit (FR-RPA-004 AC3); RLS audit_logs_select cho ROLE-005 và ROLE-007; thời gian phản hồi p95 không quá 2 giây đo ở E09-QA-05 nhờ chỉ mục theo từng điều kiện"
+      ],
+      "depends": [
+        "E09-DOC-01b",
+        "E09-CLR-05",
+        "E10-AUD-02",
+        "E03-DB-01",
+        "E01-BE-01",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06"
+      ]
+    },
+    {
+      "key": "E09-BE-09",
+      "type": "be",
+      "special": "MFA",
+      "title": "RPA_AUDIT_VERIFY_LIST: danh sách lượt kiểm chuỗi băm",
+      "goal": "Đọc audit_verification_runs mới nhất trước, keyset, cho ROLE-005 và ROLE-007.",
+      "specs": [
+        "api-list RPA_AUDIT_VERIFY_LIST",
+        "RPA_AUDIT_LOG_SEARCH_SPEC §4.3",
+        "FR-RPA-007 AC3",
+        "ADR-008 R7"
+      ],
+      "dod": [
+        "Route GET /api/audit-verification-runs: 401, 403, MFA_REQUIRED; limit và cursor sai thì VALIDATION; limit=1 cho khối trạng thái, limit=20 cho bảng lượt kiểm",
+        "items[] gồm id, started_at, finished_at, from_seq, to_seq, records_checked, result, first_bad_seq, head_hash dạng hex, anchor_outbox_event_id, error_message; sắp (started_at, id) giảm dần, keyset theo cặp (kể cả limit=1 của khối trạng thái, kết quả ổn định khi nhiều lượt cùng started_at), cursor sai thì VALIDATION; dùng chỉ mục audit_verification_runs_started_at_idx; chỉ đọc",
+        "ROLE-005 không đọc được outbox_events nên chỉ biết đã tạo mốc (anchor_outbox_event_id), không biết email mốc đã gửi thành công (OQ-6 của SPEC, ghi chỗ hở)"
+      ],
+      "depends": [
+        "E09-DB-03",
+        "E09-DOC-01b",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06"
+      ]
+    },
+    {
+      "key": "E09-BE-10",
+      "type": "be",
+      "special": "完納奨励金 (tỷ lệ có phiên bản)",
+      "title": "RPA_RATE_HISTORY_LIST: tra phiên bản tỷ lệ đã áp dụng theo giao dịch hoặc theo ngày",
+      "goal": "Hai chế độ đúng một tham số: tradeCode (hàm rate_history_trade) hoặc businessDate (active_rule_version).",
+      "specs": [
+        "api-list RPA_RATE_HISTORY_LIST",
+        "RPA_RATE_VERSION_HISTORY_SPEC §4.3, §6",
+        "RPA_DB §6 (rate_history_trade)",
+        "FR-RPA-006 AC1..AC4",
+        "ADR-003 R8, ADR-006 R6",
+        "Q25, Q33 (đã chốt)"
+      ],
+      "dod": [
+        "Route GET /api/incentives/rate-history: 401, 403 (chỉ ROLE-005 và ROLE-006, tiền tố route riêng dài hơn /api/incentives trong route-access-map), MFA_REQUIRED; đúng một trong tradeCode, businessDate, thiếu hoặc có cả hai thì VALIDATION; tradeCode rỗng hoặc quá 50 ký tự thì VALIDATION; businessDate ở tương lai thì VALIDATION; không có giao dịch mã này thì NOT_FOUND",
+        "Chế độ tradeCode: hàm rate_history_trade(p_trade_code) stable, security definer, search_path rỗng, đầu hàm kiểm has_role ROLE-005 hoặc ROLE-006 (sai thì FORBIDDEN), grant execute cho authenticated; trả trade (loại, trạng thái, is_migrated suy từ migration_record_links entity_type trade và entity_id là id dạng text, business_date, lock_no, buyer, market_rule_version hoặc null), results[] (kind gốc rồi delta theo ngày ghi sổ tăng dần, business_date, rule_version gồm version_code, effective_from, incentive_rate, base_amount, is_timely, incentive_jpy, adjustment_entry_id), rate_version_unknown, current_rate_version_code",
+        "Dòng delta dùng lại phiên bản của dòng gốc, không dùng phiên bản đang hiệu lực hiện tại (ADR-006 R6); giao dịch xác nhận của ngày đã khóa mà không có dòng gốc (thiếu tỷ lệ hoặc dữ liệu di trú không có tỷ lệ) thì 200 kèm rate_version_unknown true (không phải lỗi HTTP); giao dịch chưa chốt, ngày chưa khóa, rejected hoặc cancelled thì results rỗng và không đặt cờ; khi rate_version_unknown là true thì route (phía server) gọi hàm riêng record_rate_version_unknown_alert(p_trade_id) (security definer, search_path rỗng, thu execute khỏi PUBLIC, anon, authenticated, chỉ service role) để ghi ops_alerts rate_version_unknown mức warning, payload trade_id, không ghi trong hàm stable rate_history_trade; chống trùng: không chèn khi đã có cảnh báo cùng trade_id chưa xác nhận, lần tra sau không nhân đôi; giao dịch di trú không có tỷ lệ (không có job thưởng) cũng được cảnh báo ở lần tra đầu",
+        "Chế độ businessDate: trả versions[] đúng 2 dòng (market_rule và incentive_rate) với version_code, effective_from, activated_at, superseded_at, incentive_rate (chỉ dòng tỷ lệ), unknown; ngày không có phiên bản hiệu lực thì unknown true; tỷ lệ trả theo phần trăm 2 chữ số thập phân (Q25); không tính lại tiền thưởng (lấy nguyên incentive_jpy từ DB); chỉ đọc; thời gian phản hồi p95 không quá 2 giây đo ở E09-QA-05",
+        "Dữ liệu cảnh báo không chứa thông tin cá nhân (chỉ trade_id và mã giao dịch); các trường hợp không xác định nhưng đã có cảnh báo rate_version_missing của lần khóa (E-06) vẫn ghi thêm một cảnh báo theo giao dịch vì hai nguồn có phạm vi khác nhau (theo lần khóa và theo giao dịch)"
+      ],
+      "depends": [
+        "E09-DOC-01b",
+        "E06-DB-01",
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05",
+        "E03-DB-01",
+        "E01-BE-01",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06",
+        "E11-DB-03"
+      ]
+    },
+    {
+      "key": "E09-FE-01",
+      "type": "fe",
+      "special": "MFA",
+      "parent_of": [
+        "E09-FE-01a",
+        "E09-FE-01b"
+      ],
+      "title": "S-038 RPA_DAILY_REPORTS: báo cáo hằng ngày RPT-01..09",
+      "goal": "Màn xem và tải chín báo cáo ngày theo lần khóa, 4 trạng thái wireframe (normal, running, not-locked, relocked), chia 2 sub-issue.",
+      "specs": [
+        "RPA_DAILY_REPORTS_SPEC (4 trạng thái wireframe)",
+        "FR-RPA-001",
+        "FR-RPA-003 AC1"
+      ],
+      "dod": [
+        "Hoàn thành khi 2 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E09-FE-01a",
+      "type": "fe",
+      "special": "MFA",
+      "title": "S-038a: khung màn, chọn ngày và lần khóa, banner tiến độ và bảng chín báo cáo",
+      "goal": "Khối C, D, E của màn: bộ chọn, 4 biến thể banner, bảng 9 dòng với đủ trạng thái.",
+      "specs": [
+        "RPA_DAILY_REPORTS_SPEC §4.1 (C, D, E), §5 (khởi tạo), §6 (hiển thị theo trạng thái ngày)"
+      ],
+      "dod": [
+        "Mở màn: proxy xử lý hết phiên (M_COM_004, M_COM_005), tài khoản khóa (M_PAU_002), role khác ROLE-005 (về trang chủ, M_COM_006), phiên aal1 (bước TOTP, M_COM_019, xong quay lại URL cũ); aal2 thì skeleton, gọi song song SYS_ME và RPA_REPORT_LIST (period=daily), server chọn ngày và lần khóa mặc định, ghi ?lockId= vào URL (replace); tham số lockId, dayId sai thì VALIDATION, banner M_COM_008 rồi gọi lại không tham số; ?report=RPT-nn mở sẵn panel (do E09-FE-01b)",
+        "C-4 chọn ngày (60 ngày gần nhất, dòng DD/MM/YYYY kèm trạng thái Đang mở, Đã khóa, Chờ 締め再開, Đã mở lại) và C-5 chọn lần khóa (#lock_no · DD/MM HH:mm, thêm đã mở lại khi unlocked_at khác rỗng; ngày chưa khóa hiện — vô hiệu; một lần khóa vẫn hiện nhưng không mở danh sách); đổi ngày hoặc lần khóa thì gọi lại RPA_REPORT_LIST, đóng panel chi tiết, cập nhật URL; C-6 làm mới giữ lựa chọn, không polling",
+        "D-1 banner đủ các biến thể: chưa khóa, đang sinh (x trên 9 xong), xong (sinh xong lúc, hạn 11:00 JST, a thành công, b thiếu nguồn, c lỗi), khóa lại (lần #n, bộ cũ giữ) và biến thể ngày đang chờ 締め再開 và biến thể ngày đã mở lại nhưng chưa chốt lại khi xem bộ cũ (khác wireframe relocked; chưa có ảnh); bảng E luôn đủ 9 dòng theo danh mục tĩnh (RPT-01 đến RPT-09) kể cả khi chưa có dòng report_runs (chip Chưa có); chip Thành công, Đang sinh, Thiếu nguồn, Lỗi; số dòng #,##0; tổng tiền #,##0 円 (âm được); giờ hoàn tất HH:mm JST; rỗng thì —",
+        "Ngày chưa khóa thì E-9 (M_COM_021) thay bảng và nút zip vô hiệu; chưa có ngày nào (days rỗng) thì ẩn D, E và vô hiệu C-4, C-5; ngày hiển thị DD/MM/YYYY, API giữ ISO; RPT-06 có dòng phụ batch code và liên kết sang S-040 mang ngày và lần khóa đang chọn; Lỗi dùng chung: MFA_REQUIRED (bước TOTP, M_COM_019, quay lại URL cũ), SESSION_EXPIRED hoặc UNAUTHENTICATED (M_COM_005, M_COM_004), FORBIDDEN (M_COM_006 rồi về trang chủ), mất mạng hoặc timeout (M_COM_003, bật lại nút), 503 (M_COM_002), 500 hoặc mã lạ (dialog M_COM_001 kèm requestId, khác banner của 503 là M_COM_002); màn chỉ có GET nên không có BAD_REQUEST hay DAY_LOCKED; không tự làm mới định kỳ"
+      ],
+      "depends": [
+        "E09-BE-01a",
+        "E09-BE-02",
+        "E09-BE-03",
+        "E10-SYS-01",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01"
+      ],
+      "parent": "E09-FE-01"
+    },
+    {
+      "key": "E09-FE-01b",
+      "type": "fe",
+      "special": "MFA",
+      "title": "S-038b: chi tiết báo cáo đang chọn, tải CSV và tải zip",
+      "goal": "Khối F, nút tải từng báo cáo và nút tải tất cả của S-038.",
+      "specs": [
+        "RPA_DAILY_REPORTS_SPEC §4.1 (F, E-7, E-11), §5 (Standard, Error Handling)",
+        "FR-RPA-001 AC3",
+        "FR-RPA-003 AC1"
+      ],
+      "dod": [
+        "E-8 mở panel F của dòng chọn (thay dòng đang xem, cập nhật ?report=); F-2 thông tin lượt sinh (kỳ, lần khóa, trạng thái, bắt đầu và kết thúc HH:mm:ss); F-3 thiếu nguồn hiện M_RPA_003 kèm chức năng nguồn theo danh mục tĩnh; F-4 ghi chú cảnh báo vận hành, lỗi thì banner M_RPA_006; ẩn khi succeeded hoặc running",
+        "E-7 và F-5 Tải CSV chỉ bật khi succeeded: khóa nút kèm spinner, gọi RPA_REPORT_DOWNLOAD, thành công thì chuyển trình duyệt tới url, bật lại nút; INVALID_STATE thì banner M_COM_015 (mã báo cáo, trạng thái hiện tại) rồi tải lại danh sách; NOT_FOUND thì M_COM_007 và tải lại",
+        "E-11 Tải tất cả (zip) chỉ bật khi lần khóa chọn có ít nhất một succeeded và không còn running: gọi RPA_REPORT_DOWNLOAD_ALL (daily, lockId), chuyển tới url; skipped có skipped_no_source thì inline dưới nút M_RPA_003 với danh sách mã, có failed thì banner M_RPA_006 với danh sách mã và ngày; INVALID_STATE thì M_COM_015 (Bộ báo cáo lần khóa #n); VALIDATION thì M_COM_008 và gọi lại không tham số; không có nút sinh lại (Q43); Lỗi dùng chung: MFA_REQUIRED (bước TOTP, M_COM_019, quay lại URL cũ), SESSION_EXPIRED hoặc UNAUTHENTICATED (M_COM_005, M_COM_004), FORBIDDEN (M_COM_006 rồi về trang chủ), mất mạng hoặc timeout (M_COM_003, bật lại nút), 503 (M_COM_002), 500 hoặc mã lạ (dialog M_COM_001 kèm requestId, khác banner của 503 là M_COM_002); màn chỉ có GET nên không có BAD_REQUEST hay DAY_LOCKED; không tự làm mới định kỳ"
+      ],
+      "depends": [
+        "E09-FE-01a"
+      ],
+      "parent": "E09-FE-01"
+    },
+    {
+      "key": "E09-FE-02",
+      "type": "fe",
+      "special": "MFA",
+      "title": "S-039 RPA_MONTHLY_REPORTS: báo cáo hằng tháng RPT-10..12 và lịch sử RPT-12",
+      "goal": "Màn xem và tải ba báo cáo tháng và lịch sử RPT-12 trong tháng; 3 trạng thái wireframe (normal, month-open, loading).",
+      "specs": [
+        "RPA_MONTHLY_REPORTS_SPEC (3 trạng thái wireframe)",
+        "FR-RPA-002",
+        "FR-RPA-003 AC1",
+        "Q51 (đã chốt)"
+      ],
+      "dod": [
+        "Mở màn: cùng cổng truy cập như S-038 (chỉ ROLE-005, aal2 bắt buộc); aal2 thì D-1 biến thể đang tải, E-9 skeleton, nút vô hiệu, gọi song song SYS_ME và RPA_REPORT_LIST (period=monthly), server chọn tháng mặc định, ghi ?month= (replace); month sai định dạng hoặc ngoài 24 tháng thì bỏ qua và dùng mặc định",
+        "C-4 chọn tháng (24 tháng gần nhất, MM/YYYY kèm đã khóa hoặc chưa khóa, gửi YYYY-MM); D-1 ba biến thể (đã khóa kèm ngày nghiệp vụ cuối, giờ 締め và x trên 3 báo cáo; chưa khóa; đang tải); bảng E đúng 3 dòng RPT-10, 11, 12 với kỳ MM/YYYY, chip trạng thái, số dòng, giờ hoàn tất DD/MM HH:mm, nút CSV chỉ bật khi succeeded; tháng chưa từng sinh và chưa khóa thì E-8 thay ba dòng, còn tháng đã sinh rồi ngày cuối bị 締め再開 chưa chốt lại thì vẫn hiện ba dòng cũ kèm banner chờ chốt lại (không mất đường xem bộ cũ; MONTHLY A2 và Element E-8 mâu thuẫn, chốt ở E09-DOC-01a); dòng failed thì banner M_RPA_006 với kỳ MM/YYYY",
+        "Bảng F lịch sử RPT-12 trong tháng: số bản, cột Sinh lúc, Lý do sinh (Hằng tháng hoặc Kích hoạt phiên bản tỷ lệ), Phiên bản (mã, liên kết sang S-030 chi tiết phiên bản, chỉ đọc cho ROLE-005), Hiệu lực từ, Trạng thái, Tải CSV, cảnh báo M_RPA_003 khi có dòng thiếu nguồn, Tải thêm 20 dòng bằng section=rpt12 và cursor; rỗng thì M_COM_021; ghi chú tĩnh: kích hoạt 業務規程 không sinh RPT-12",
+        "C-5 làm mới gọi lại RPA_REPORT_LIST giữ tháng và bỏ cursor của bảng F; VALIDATION của request tháng thì banner M_COM_008 rồi gọi lại không month; dòng RPT-12 failed ở bảng F cũng hiện banner M_RPA_006 (F-7, mã RPT-12 và MM/YYYY); G-2 Tải tất cả (zip) chỉ bật khi bảng E có ít nhất một succeeded và không còn running: gọi RPA_REPORT_DOWNLOAD_ALL (monthly, month); skipped hiện M_RPA_003 hoặc M_RPA_006 như S-038; mỗi nút tải xử lý INVALID_STATE (M_COM_015) và NOT_FOUND (M_COM_007); không có nút sinh lại; Lỗi dùng chung: MFA_REQUIRED (bước TOTP, M_COM_019, quay lại URL cũ), SESSION_EXPIRED hoặc UNAUTHENTICATED (M_COM_005, M_COM_004), FORBIDDEN (M_COM_006 rồi về trang chủ), mất mạng hoặc timeout (M_COM_003, bật lại nút), 503 (M_COM_002), 500 hoặc mã lạ (dialog M_COM_001 kèm requestId, khác banner của 503 là M_COM_002); màn chỉ có GET nên không có BAD_REQUEST hay DAY_LOCKED; không tự làm mới định kỳ"
+      ],
+      "depends": [
+        "E09-BE-01b",
+        "E09-BE-02",
+        "E09-BE-03",
+        "E10-SYS-01",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01"
+      ]
+    },
+    {
+      "key": "E09-FE-03",
+      "type": "fe",
+      "special": "MFA",
+      "parent_of": [
+        "E09-FE-03a",
+        "E09-FE-03b"
+      ],
+      "title": "S-040 RPA_EXPORT_CENTER: trung tâm xuất báo cáo và đẩy SFTP RPT-06",
+      "goal": "Màn tải 12 báo cáo cho ROLE-005 và theo dõi SFTP cho ROLE-005 và ROLE-007; 3 trạng thái wireframe (normal, retrying, failed), chia 2 sub-issue.",
+      "specs": [
+        "RPA_EXPORT_CENTER_SPEC (3 trạng thái wireframe)",
+        "FR-RPA-003"
+      ],
+      "dod": [
+        "Hoàn thành khi 2 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E09-FE-03a",
+      "type": "fe",
+      "special": "MFA",
+      "title": "S-040a: khung màn, tách theo role, chọn kỳ, bảng 12 báo cáo và tải",
+      "goal": "Khối C và E của màn, ẩn khối E với ROLE-007, tải từng báo cáo và zip ngày, zip tháng.",
+      "specs": [
+        "RPA_EXPORT_CENTER_SPEC §4.1 (C, E), §5, §6 (phân quyền hiển thị theo role)",
+        "FR-RPA-003 AC1"
+      ],
+      "dod": [
+        "Mở màn: ROLE-005 và ROLE-007 vào được, role khác về trang chủ (M_COM_006), phiên aal1 thì bước TOTP; ROLE-005 gọi song song SYS_ME, RPA_REPORT_LIST (daily), RPA_REPORT_LIST (monthly), RPA_SFTP_EXPORT_LIST và ghi ?lockId=&month=; ROLE-007 chỉ gọi SYS_ME và RPA_SFTP_EXPORT_LIST, không gọi RPA_REPORT_LIST, ẩn hẳn C-4, C-5 và khối E (không chỉ vô hiệu); mô tả C-3 đổi theo role",
+        "C-4 chọn ngày và lần khóa (mỗi lần khóa một dòng, chỉ ngày đã khóa, mặc định lần mới nhất; chọn thì gọi RPA_REPORT_LIST daily và RPA_SFTP_EXPORT_LIST lockId limit=1 rồi cập nhật E, D-1, F) và C-5 chọn tháng (24 tháng, mặc định tháng gần nhất đã khóa; chọn thì gọi RPA_REPORT_LIST monthly cập nhật E); C-6 làm mới gọi lại các API của role, giữ lựa chọn, bỏ cursor của G; bảng E đủ 12 dòng RPT-01..12 theo danh mục tĩnh (kỳ DD/MM · #lock_no hoặc MM/YYYY, chip trạng thái kể cả Chưa có, giờ hoàn tất), RPT-06 hiện batch code, RPT-12 ghi bản theo sự kiện nằm ở S-039 kèm liên kết",
+        "E-6 Tải CSV chỉ bật khi succeeded (INVALID_STATE thì M_COM_015, NOT_FOUND thì M_COM_007, đều tải lại bảng); E-8 Tải tất cả chỉ bật khi có ít nhất một dòng succeeded và không dòng nào running, gọi RPA_REPORT_DOWNLOAD_ALL hai lần (zip ngày, zip tháng, bỏ kỳ không có succeeded) rồi chuyển tới từng url lần lượt; INVALID_STATE cho cả hai kỳ thì M_COM_015 (Bộ báo cáo); skipped hiện M_RPA_003 dưới nút, failed thì banner M_RPA_006 với kỳ; chú thích định dạng, signed URL ngắn hạn và làm tròn xuống JPY nguyên (Q26) hiển thị tĩnh; VALIDATION thì M_COM_008 và gọi lại không tham số; Lỗi dùng chung: MFA_REQUIRED (bước TOTP, M_COM_019, quay lại URL cũ), SESSION_EXPIRED hoặc UNAUTHENTICATED (M_COM_005, M_COM_004), FORBIDDEN (M_COM_006 rồi về trang chủ), mất mạng hoặc timeout (M_COM_003, bật lại nút), 503 (M_COM_002), 500 hoặc mã lạ (dialog M_COM_001 kèm requestId, khác banner của 503 là M_COM_002); màn chỉ có GET nên không có BAD_REQUEST hay DAY_LOCKED; không tự làm mới định kỳ"
+      ],
+      "depends": [
+        "E09-BE-01a",
+        "E09-BE-01b",
+        "E09-BE-02",
+        "E09-BE-03",
+        "E09-BE-04",
+        "E10-SYS-01",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01"
+      ],
+      "parent": "E09-FE-03"
+    },
+    {
+      "key": "E09-FE-03b",
+      "type": "fe",
+      "special": "outbox + worker (ADR-007)",
+      "title": "S-040b: banner và card SFTP RPT-06 và lịch sử đẩy SFTP",
+      "goal": "Khối D, F, G của màn, cùng cho ROLE-005 và ROLE-007, chỉ đọc.",
+      "specs": [
+        "RPA_EXPORT_CENTER_SPEC §4.1 (D, F, G), §5, §6 (A2..A4)",
+        "FR-RPA-003 AC2, AC3"
+      ],
+      "dod": [
+        "D-1 banner đúng ba biến thể theo dòng RPT-06 đang xem: đã gửi (ngày, giờ, lần thử n), đang thử lại (đã thử n trên 4, lần kế tiếp HH:mm, không cần thao tác; pending với outbox pending hoặc processing tính là lần 1), thất bại (M_RPA_004 kèm ngày và đã báo ROLE-007); chưa có dòng sftp_exports thì ẩn D-1, F hiện chưa có lượt đẩy và G hiện M_COM_021",
+        "F card: chip trạng thái, batch code (ROLE-007 hiện —), tên tệp đích, lần thử n trên tối đa max_attempts, lần thử kế tiếp (chỉ khi retry_wait), gửi xong lúc, lỗi gần nhất (không có host hay khóa), quy tắc thử lại tĩnh (4 lần cách 4 phút trong 15 phút, không gửi lại thủ công); F-4 thông tin kết nối chỉ chữ tĩnh, không hiển thị host, tài khoản dịch vụ hay khóa SSH (NFR-SEC-04)",
+        "G bảng lịch sử: cột ngày nghiệp vụ DD/MM (thêm #lock_no khi từ 2), tên tệp, chip trạng thái, gửi xong hoặc cập nhật; bấm dòng thì D-1 và F hiển thị dòng đó, ROLE-005 còn chuyển C-4 tới lần khóa tương ứng và tải lại khối E; G-6 Tải thêm 20 dòng đến khi next_cursor rỗng; ROLE-007 gọi API ngoài quyền (lỗi FE) thì M_COM_006 và ẩn khối E, giữ màn; không có nút gửi lại SFTP; Lỗi dùng chung: MFA_REQUIRED (bước TOTP, M_COM_019, quay lại URL cũ), SESSION_EXPIRED hoặc UNAUTHENTICATED (M_COM_005, M_COM_004), FORBIDDEN (M_COM_006 rồi về trang chủ), mất mạng hoặc timeout (M_COM_003, bật lại nút), 503 (M_COM_002), 500 hoặc mã lạ (dialog M_COM_001 kèm requestId, khác banner của 503 là M_COM_002); màn chỉ có GET nên không có BAD_REQUEST hay DAY_LOCKED; không tự làm mới định kỳ"
+      ],
+      "depends": [
+        "E09-FE-03a"
+      ],
+      "parent": "E09-FE-03"
+    },
+    {
+      "key": "E09-FE-04",
+      "type": "fe",
+      "special": "audit bất biến + hash-chain (ADR-008)",
+      "parent_of": [
+        "E09-FE-04a",
+        "E09-FE-04b"
+      ],
+      "title": "S-041 RPA_AUDIT_LOG_SEARCH: tra cứu kiểm toán và lượt kiểm chuỗi băm",
+      "goal": "Màn chỉ đọc cho ROLE-005 và ROLE-007; 4 trạng thái wireframe (normal, no-condition, empty, chain-mismatch), chia 2 sub-issue.",
+      "specs": [
+        "RPA_AUDIT_LOG_SEARCH_SPEC (4 trạng thái wireframe)",
+        "FR-RPA-004, FR-RPA-005, FR-RPA-007"
+      ],
+      "dod": [
+        "Hoàn thành khi 2 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E09-FE-04a",
+      "type": "fe",
+      "special": "audit bất biến + hash-chain (ADR-008)",
+      "title": "S-041a: tab Nhật ký kiểm toán: điều kiện tìm, kết quả và panel chi tiết bản ghi",
+      "goal": "Khối F, G, H và tab 1 của màn.",
+      "specs": [
+        "RPA_AUDIT_LOG_SEARCH_SPEC §4.1 (F, G, H), §4.2, §5, §6 (A1..A4, A7)",
+        "FR-RPA-005 AC1..AC4"
+      ],
+      "dod": [
+        "Mở màn: ROLE-005 và ROLE-007 aal2 (role khác về trang chủ, aal1 thì TOTP); tab 1 F trống, G-10 'Nhập điều kiện rồi bấm Tìm kiếm', không gọi RPA_AUDIT_SEARCH khi mở; F-3 chọn participant gợi ý từ PAU_PARTICIPANT_LIST (debounce 300 ms, ROLE-007 cũng gọi được, gõ mà không chọn thì coi như trống)",
+        "Validation client: ít nhất một trong F-1..F-4 (mã giao dịch sau trim khác rỗng, ngày, participant đã chọn, loại thao tác khác Tất cả) nếu không thì F-7 M_RPA_001 và không gọi API; F-1 chuyển chữ HOA, tối đa 50 ký tự (quá thì M_COM_010 dưới F-1), không ép định dạng TX-NNNNNN (mã di trú giữ mã gốc); F-2 ngày DD/MM/YYYY gửi ISO, chặn ngày tương lai; F-4 năm nhóm chuyển thành actionGroup; Enter trong F-1 cũng kích hoạt tìm; F-5 xóa điều kiện không gọi API, ẩn F-7 và giữ kết quả cũ",
+        "F-6 Tìm: khóa nút kèm spinner, gọi RPA_AUDIT_SEARCH bỏ cursor; có dòng thì bảng G (Thời điểm DD/MM HH:mm JST, Seq #,##0, Người · role hoặc Hệ thống khi actor_id rỗng, Hành động, Đối tượng, Participant), không dòng thì G-9 M_COM_021; G-7 chỉ đếm số dòng đã tải; G-8 Tải thêm 20 dòng với đúng điều kiện của lần tìm trước (không dùng điều kiện đang sửa trong ô) đến khi next_cursor rỗng; tìm mới thì đóng panel H; VALIDATION: không điều kiện thì F-7 M_RPA_001, fields.tradeCode thì M_COM_010 dưới F-1, khác thì banner M_COM_008",
+        "Bấm một dòng mở panel H bên phải (chỉ đọc): tiêu đề Seq và action, thời điểm server, thời điểm trên thiết bị (— nếu rỗng), người và role, ngày nghiệp vụ, participant, lý do; bảng trước và sau chỉ các khóa có giá trị khác nhau (cả hai rỗng thì ẩn bảng); băm rút gọn có tooltip đủ 64 ký tự và hash_version; ghi chú bất biến; H-6 liên kết sang S-042 với ?trade= chỉ khi đối tượng là giao dịch và người xem là ROLE-005 (ẩn với ROLE-007); Lỗi dùng chung: MFA_REQUIRED (bước TOTP, M_COM_019, quay lại URL cũ), SESSION_EXPIRED hoặc UNAUTHENTICATED (M_COM_005, M_COM_004), FORBIDDEN (M_COM_006 rồi về trang chủ), mất mạng hoặc timeout (M_COM_003, bật lại nút), 503 (M_COM_002), 500 hoặc mã lạ (dialog M_COM_001 kèm requestId, khác banner của 503 là M_COM_002); màn chỉ có GET nên không có BAD_REQUEST hay DAY_LOCKED; không tự làm mới định kỳ"
+      ],
+      "depends": [
+        "E09-BE-08",
+        "E09-BE-09",
+        "E01-BE-10",
+        "E10-SYS-01",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01"
+      ],
+      "parent": "E09-FE-04"
+    },
+    {
+      "key": "E09-FE-04b",
+      "type": "fe",
+      "special": "audit bất biến + hash-chain (ADR-008)",
+      "title": "S-041b: khối trạng thái kiểm chuỗi băm và tab Lượt kiểm chuỗi băm",
+      "goal": "Khối D và tab 2 của màn, gồm banner sai lệch và đánh dấu bản ghi lệch.",
+      "specs": [
+        "RPA_AUDIT_LOG_SEARCH_SPEC §4.1 (D, E, I), §5, §6 (A4, A5)",
+        "FR-RPA-007 AC2, AC3",
+        "ADR-008 R5, R7"
+      ],
+      "dod": [
+        "Mở màn gọi song song SYS_ME và RPA_AUDIT_VERIFY_LIST (limit=1) để dựng khối D: D-1 chip kết quả (ok, mismatch, broken, error, đang chạy khi result rỗng) kèm khoảng thời gian, seq từ đến, số bản ghi, và seq lệch khi có; nếu lượt mới nhất bắt đầu trước hôm nay (JST) thì thêm 'Hôm nay chưa có lượt kiểm'; chưa có lượt nào thì 'Chưa có lượt kiểm' và ẩn D-2, D-4",
+        "D-2 băm đầu chuỗi rút gọn (tooltip đủ 64 ký tự) và 'đã tạo mốc gửi ngoài DB #id' hoặc 'chưa gửi'; D-4 banner M_RPA_005 (thời điểm chạy DD/MM/YYYY HH:mm, seq lệch) chỉ khi lượt gần nhất là mismatch hoặc broken, ghi chú nhật ký vẫn tra được; bảng ở tab 1 đánh dấu ⚠ và tô nền mọi dòng có Seq từ first_bad_seq trở lên của lượt gần nhất (E09-FE-04a nhận cờ này)",
+        "Tab 2 (?tab=verification, D-3 và E-1 chuyển tab): gọi RPA_AUDIT_VERIFY_LIST limit=20, cột Bắt đầu, Kết thúc, Đoạn seq, Số bản ghi, Kết quả (chip, error tính là lỡ), Seq lệch đầu tiên, Băm đầu chuỗi và mốc, Lỗi; I-9 Tải thêm 20 lượt; rỗng thì M_COM_021; I-10 ghi chú tĩnh về giám sát lỡ lượt và kiểm toàn chuỗi mỗi ngày; chuyển về tab 1 giữ điều kiện và kết quả cũ; Lỗi dùng chung: MFA_REQUIRED (bước TOTP, M_COM_019, quay lại URL cũ), SESSION_EXPIRED hoặc UNAUTHENTICATED (M_COM_005, M_COM_004), FORBIDDEN (M_COM_006 rồi về trang chủ), mất mạng hoặc timeout (M_COM_003, bật lại nút), 503 (M_COM_002), 500 hoặc mã lạ (dialog M_COM_001 kèm requestId, khác banner của 503 là M_COM_002); màn chỉ có GET nên không có BAD_REQUEST hay DAY_LOCKED; không tự làm mới định kỳ"
+      ],
+      "depends": [
+        "E09-FE-04a",
+        "E09-BE-09"
+      ],
+      "parent": "E09-FE-04"
+    },
+    {
+      "key": "E09-FE-05",
+      "type": "fe",
+      "special": "完納奨励金 (tỷ lệ có phiên bản)",
+      "title": "S-042 RPA_RATE_VERSION_HISTORY: tra lịch sử áp dụng tỷ lệ 完納奨励金",
+      "goal": "Màn giải trình chỉ đọc cho ROLE-005 và ROLE-006; 4 trạng thái wireframe (normal, not-found, empty, by-day).",
+      "specs": [
+        "RPA_RATE_VERSION_HISTORY_SPEC (4 trạng thái wireframe)",
+        "FR-RPA-006",
+        "ADR-003 R8, ADR-006 R6",
+        "Q25, Q33 (đã chốt)"
+      ],
+      "dod": [
+        "Mở màn: ROLE-005 và ROLE-006 aal2 (role khác về trang chủ, aal1 thì TOTP và quay lại URL giữ ?trade= hoặc ?date=); không tham số thì D-1 là Giao dịch, D-2 trống có focus, hiện E-3 'Nhập mã giao dịch để bắt đầu tra cứu', ẩn F và G, ẩn D-4 với ROLE-006; ?trade=X điền D-2 và tra ngay, ?date=YYYY-MM-DD chuyển sang chế độ ngày và tra ngay",
+        "Validation client: chế độ giao dịch D-2 sau trim, chữ HOA, rỗng thì M_COM_009 ('Mã giao dịch'), quá 50 ký tự thì M_COM_010, không ép định dạng TX-NNNNNN; chế độ ngày rỗng thì M_COM_009 ('Ngày nghiệp vụ'), chặn ngày tương lai; đổi chế độ xóa D-2 và kết quả; lỗi client thì inline dưới D-2 và không gọi API",
+        "Enter trong D-2 cũng kích hoạt tra; D-3 khóa kèm spinner trong lúc gọi (không gửi trùng); D-3 Tra cứu chế độ giao dịch: gọi RPA_RATE_HISTORY_LIST (tradeCode), ghi ?trade=; E-1 thông tin giao dịch (mã, loại 相対取引 hoặc せり, trạng thái, thêm di trú khi is_migrated, ngày nghiệp vụ kèm khóa #lock_no, bên mua), E-2 phiên bản 業務規程 áp cho giao dịch (— dữ liệu cũ khi rỗng); bảng F gốc trước rồi delta theo ngày ghi sổ, cột Loại, Ngày ghi sổ, Phiên bản (delta ghi 'dùng bản gốc'), Hiệu lực từ, Tỷ lệ dạng 0,50 % (Q25), Số tiền hợp lệ, Tiền thưởng (không đúng hạn ghi '0 円 (không đúng hạn)'), Bút toán điều chỉnh (liên kết sang S-031 chỉ ROLE-005, ROLE-006 chữ thường); F-10 ghi chú delta dùng phiên bản gốc; rate_version_unknown thì F-11 M_RPA_002 và dòng gốc hiện chip 'Không xác định' thay cho các cột F-4 đến F-7 (không dựng dòng thưởng có số tiền giả; results rỗng mà cờ unknown true vẫn hiện F-11); results rỗng không cờ thì M_COM_021",
+        "Chế độ ngày: gọi RPA_RATE_HISTORY_LIST (businessDate), ghi ?date=, bảng G đúng 2 dòng (業務規程, tỷ lệ 完納奨励金) với mã phiên bản, hiệu lực từ, kích hoạt lúc, hết hiệu lực, tỷ lệ; unknown thì G-3 'Không xác định' kèm M_RPA_002 dưới bảng; NOT_FOUND thì banner M_COM_007 ('giao dịch {mã}') và ẩn E, F; VALIDATION thì message theo fields hoặc banner M_COM_008; D-4 liên kết sang S-038 ?report=RPT-07 chỉ ROLE-005; Lỗi dùng chung: MFA_REQUIRED (bước TOTP, M_COM_019, quay lại URL cũ), SESSION_EXPIRED hoặc UNAUTHENTICATED (M_COM_005, M_COM_004), FORBIDDEN (M_COM_006 rồi về trang chủ), mất mạng hoặc timeout (M_COM_003, bật lại nút), 503 (M_COM_002), 500 hoặc mã lạ (dialog M_COM_001 kèm requestId, khác banner của 503 là M_COM_002); màn chỉ có GET nên không có BAD_REQUEST hay DAY_LOCKED; không tự làm mới định kỳ"
+      ],
+      "depends": [
+        "E09-BE-10",
+        "E10-SYS-01",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01"
+      ]
+    },
+    {
+      "key": "E09-QA-01",
+      "type": "qa",
+      "special": "outbox + worker (ADR-007)",
+      "title": "QA đầu cuối: sinh báo cáo ngày và tháng sau khóa, khóa lại và kích hoạt tỷ lệ",
+      "goal": "Kiểm thử worker sinh 12 báo cáo trên PostgreSQL với dữ liệu mẫu.",
+      "specs": [
+        "FR-RPA-001",
+        "FR-RPA-002",
+        "ADR-007 R6, R11",
+        "RPA_DB §4.1",
+        "Q26, Q51, Q66 (đã chốt)"
+      ],
+      "dod": [
+        "Khóa ngày: sau sự kiện business_day_locked sinh đủ 9 dòng report_runs (RPT-01..09) cho đúng lock_id, báo cáo chạy sau job thưởng (thứ tự trong cặp, giao lại thì không nhân đôi); ghi đầu vào dữ liệu mẫu và tổng JPY mong đợi, tổng total_amount bằng tổng các dòng CSV (floor từng dòng giao dịch rồi cộng)",
+        "Thiếu nguồn nghiệp vụ một báo cáo thì chỉ báo cáo đó là skipped_no_source kèm ops_alerts report_source_missing, tám báo cáo còn lại succeeded và outbox sent; lỗi kỹ thuật (Storage lỗi, rollback một báo cáo, mất kết nối) thì báo cáo đó failed kèm error_message, các báo cáo đã xong giữ nguyên, outbox retry_wait và lần thử lại chỉ làm lại báo cáo chưa xong; hết lượt thì mọi báo cáo chưa ở trạng thái cuối thành failed, outbox failed và có ops_alerts job_failed (kể cả ca job thưởng hết lượt trước khi handler báo cáo chạy); nguồn rỗng hợp lệ thì succeeded 0 dòng; chạy lại cùng lock_id ghi đè đúng 9 dòng (đếm dòng trước và sau)",
+        "Ma trận thứ tự: khóa lần 1, rồi điều chỉnh sau khóa hoặc mở lại và thêm giao dịch, rồi khóa lần 2; sau đó xử lý sự kiện lần 1 muộn hoặc chạy lại (trước và sau khi sự kiện lần 2 chạy) thì nội dung CSV và tổng của bộ lần 1 không đổi (so cả nội dung dòng và tổng tiền, không chỉ đếm dòng); khóa lại sau 締め再開: lần khóa 2 sinh bộ báo cáo mới theo quyết định E09-CLR-02, bộ lần khóa 1 giữ nguyên và vẫn tải được; ngày cuối tháng khóa (theo E09-CLR-06) sinh RPT-10, 11, 12 theo period_month, ngày cuối tháng mở lại rồi chốt lại thì ghi đè đúng dòng tháng đó",
+        "Kích hoạt phiên bản tỷ lệ: sinh một RPT-12 event theo rule_version_id, gửi trùng sự kiện không tạo dòng thứ hai; kích hoạt market_rule không sinh RPT-12 (Q51); ngày lịch sử nạp bằng di trú (lần khóa source migration) không sinh báo cáo (Q66)",
+        "Đo thời điểm hoàn tất cả bộ 9 báo cáo (đủ 9 dòng ở trạng thái cuối, không còn running hay thiếu dòng, lấy max finished_at) so với mốc 11:00 JST của ngày SLA theo quyết định đã chấp nhận ở E09-DOC-01a (không tự điền ngày kế tiếp), và ghi riêng thời lượng từ lúc khóa đến hoàn tất; trên dữ liệu đại diện tải thiết kế (700 giao dịch thường, 1.200 cao điểm), ghi cách đo, số mẫu, kết quả (NFR-PERF-03); phản ví dụ: RPT-09 xong 10:55 nhưng RPT-01 xong 11:03 thì không đạt; mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả",
+        "Delta theo ngày ghi sổ: một giao dịch gốc ngày D1 có bút toán ghi sổ ngày D2 sau khóa D1: RPT-07 và RPT-08 của D2 chứa đúng một lần dòng delta (tổng có dấu), RPT của D1 không đổi; thêm lần khóa lại D2 thì delta không nhân đôi và không mất",
+        "RPT-03: participant tạm dừng, chưa tới ngày hiệu lực, có căn cứ chờ phủ tiếp và participant không có hạn không bị liệt kê là hết hạn; ngưỡng rỗng chỉ có nhóm đã hết hạn",
+        "Hai sự kiện rule_version_activated liên tiếp (hai phiên bản tỷ lệ) xử lý sau khi cả hai đã phát: mỗi RPT-12 event ghi đúng phiên bản và hiệu lực của chính sự kiện (payload rule_version_id), không dùng bản đang hiệu lực mới nhất",
+        "Báo cáo tháng sinh lại: tháng tổng 100 đã succeeded, rồi ngày cuối tháng mở lại và thêm dữ liệu, khóa mới thì bộ tháng thành tổng 160 (không bị bỏ qua vì đã ở trạng thái cuối); giao lại sự kiện cũ sau sự kiện mới không ghi lùi về 100; thử lại cùng sự kiện giữ nguyên báo cáo đã xong",
+        "Lỗi truy vấn tạm thời ở một báo cáo của nhóm RPT-01..03 thì retry (outbox không sent), không bị coi là thiếu nguồn"
+      ],
+      "depends": [
+        "E09-BE-05",
+        "E05-BE-03",
+        "E06-BE-01",
+        "E08-BE-08d",
+        "E05-BE-04",
+        "E05-BE-05"
+      ]
+    },
+    {
+      "key": "E09-QA-02",
+      "type": "qa",
+      "special": "MFA",
+      "title": "QA đầu cuối: S-038, S-039, S-040 (xem, tải CSV, tải zip, quyền theo role) từ trình duyệt thật",
+      "goal": "Kiểm thử ba màn báo cáo và bốn API đọc.",
+      "specs": [
+        "FR-RPA-001..003",
+        "RPA_DAILY_REPORTS_SPEC",
+        "RPA_MONTHLY_REPORTS_SPEC",
+        "RPA_EXPORT_CENTER_SPEC"
+      ],
+      "dod": [
+        "Màn ngày: chọn ngày và lần khóa, bốn biến thể banner (xong, đang sinh, chưa khóa, khóa lại) và biến thể ngày chờ 締め再開, nút zip khóa khi còn running; tải CSV thành công thì tệp mở được và số dòng khớp row_count; báo cáo chưa succeeded thì API trả INVALID_STATE và FE hiện M_COM_015 (cả khi bấm lúc dữ liệu cũ)",
+        "Màn tháng: tháng đã khóa, tháng chưa khóa (chỉ RPT-12 event), lịch sử RPT-12 qua ranh giới 20 dòng không lặp và không thiếu, zip tháng gồm RPT-12 event của tháng; zip ngày và zip tháng là hai tệp ở S-040; zip có báo cáo lỗi thì liệt kê ở skipped, FE hiện M_RPA_003 hoặc M_RPA_006",
+        "Quyền: ROLE-007 vào S-040 chỉ thấy khối SFTP, gọi /api/reports/** thì FORBIDDEN, không thấy batch_code; ROLE-001..004, 006 bị chuyển về trang chủ; aal1 thì MFA_REQUIRED trước FORBIDDEN; signed URL hết hạn thì xin lại được, URL của báo cáo khác không dùng được; kiểm RLS: authenticated không đọc trực tiếp report_runs nếu không phải ROLE-005",
+        "Mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả",
+        "Tháng đã có báo cáo rồi ngày cuối tháng bị 締め再開 (chưa chốt lại): màn tháng vẫn hiện và tải được bộ cũ kèm banner; sau khi chốt lại thì bộ tháng cập nhật theo quyết định E09-CLR-02",
+        "Keyset: fixture nhiều dòng cùng started_at (rpt12_history) qua ranh giới 20 dòng không lặp và không thiếu"
+      ],
+      "depends": [
+        "E09-FE-01",
+        "E09-FE-02",
+        "E09-FE-03",
+        "E09-QA-01"
+      ]
+    },
+    {
+      "key": "E09-QA-03",
+      "type": "qa",
+      "special": "outbox + worker (ADR-007)",
+      "title": "QA đầu cuối: đẩy SFTP RPT-06 với máy chủ SFTP giả, thử lại và thất bại",
+      "goal": "Kiểm thử luồng RPT-06 → outbox → worker → sftp_exports.",
+      "specs": [
+        "FR-RPA-003 AC2..AC5",
+        "ADR-007 R6, R7",
+        "RPA_EXPORT_CENTER_SPEC §6 A2..A4",
+        "Q4 (chờ E09-CLR-01)"
+      ],
+      "dod": [
+        "RPT-06 thành công thì có sự kiện report_rpt06_ready và một dòng sftp_exports; máy chủ SFTP giả nhận tệp đúng tên remote_file_name, nội dung khớp CSV, sftp_exports sent kèm sent_at và S-040 hiện banner đã gửi",
+        "Máy chủ giả lỗi liên tiếp: bốn lần thử cách bốn phút trong 15 phút (1 lần đầu và 3 lần thử lại) thì failed, last_error không chứa host hay khóa, có ops_alerts sftp_failed và sự kiện export_failed (do E-08), S-040 hiện M_RPA_004 và ROLE-005 tải tay được; lỗi hai lần rồi thành công thì sent với lần thử đúng; gửi lặp cùng ngày ghi đè đúng tệp",
+        "Lần khóa 2 của cùng ngày: sinh RPT-06 mới với batch_code mới và lượt đẩy mới, tệp mới (xử lý tệp cũ phía kế toán theo E09-CLR-01); ma trận đua: A nhận lần 1 bị coi treo, B nhận lần 2 và A trả kết quả khi B đang xử lý thì không đổi sftp_exports; A trả sau khi sftp_exports đã sent hoặc failed thì không đảo; lỗi giữa hai lần ghi (sftp_exports và outbox) thì phục hồi được và hai bảng nhất quán sau lần giao lại; ROLE-007 xem được trạng thái và không thấy batch_code; không có đường gửi lại thủ công",
+        "Mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả",
+        "Replay: RPT-06 đã gửi (sent) nhưng báo cáo khác lỗi làm cả cặp thử lại thì vẫn đúng một sự kiện report_rpt06_ready, một dòng sftp_exports giữ sent, cùng batch_code và tên tệp, không gửi lại tệp thứ hai",
+        "Worker chết ở lần cuối không có callback: sau thu hồi, outbox failed và sftp_exports failed nhất quán, có sftp_failed và export_failed đúng một lần; sftp_exports không còn pending"
+      ],
+      "depends": [
+        "E09-BE-06",
+        "E09-BE-04",
+        "E09-FE-03",
+        "E08-BE-08d"
+      ]
+    },
+    {
+      "key": "E09-QA-04",
+      "type": "qa",
+      "special": "audit bất biến + hash-chain (ADR-008)",
+      "title": "QA bất biến và chuỗi băm audit: giả lập sửa log, đồng thời, lượt lỡ và khôi phục",
+      "goal": "Kiểm thử pgTAP và kịch bản giả lập sửa log trên staging.",
+      "specs": [
+        "RPA_AUDIT_HASH_CHAIN_TECH §4.1..§4.5, §5 (test case gợi ý)",
+        "FR-RPA-004 AC4",
+        "FR-RPA-007",
+        "NFR-AUD-01",
+        "ADR-008"
+      ],
+      "dod": [
+        "Bất biến: UPDATE, DELETE, TRUNCATE trên audit_logs bởi service_role và mọi role đều lỗi; INSERT trực tiếp bằng service_role, authenticated, anon bị từ chối (permission denied); dòng đầu có prev_hash 32 byte 0; băm tính lại bằng hàm chuẩn bằng row_hash; cùng dữ liệu ở TimeZone Asia/Tokyo và UTC cho cùng băm; actor_role system khi không có JWT",
+        "Đồng thời: 50 phiên gọi RPC ghi audit song song thì chain_seq liên tục 1 đến N, lượt kiểm ok; RPC rollback sau write_audit không để lỗ hổng seq; fixture sai thứ tự khóa (advisory trước khóa hàng) phát hiện deadlock 40P01",
+        "Giả lập sửa (staging, chủ sở hữu tắt trigger): đổi reason dòng 50 thì mismatch với first_bad_seq 50, có ops_alerts audit_chain_mismatch và sự kiện Critical; xóa dòng 50 thì broken (hở seq); sửa dòng 50 rồi tính lại cả chuỗi thì mismatch tại to_seq lượt trước và lệch email mốc; TRUNCATE (trigger tắt) thì broken (mất đuôi); chèn dòng giả chain_seq bằng max cộng 1 với băm sai thì mismatch",
+        "Job: không chạy cả ngày thì 23:30 JST có audit_verification_missed; lượt error tính là lỡ; lượt ok tạo đúng một sự kiện audit_anchor_daily và gán anchor_outbox_event_id; lượt error không gửi mốc; chạy giám sát hai lần không tạo cảnh báo trùng; khôi phục backup trên staging thì lượt kiểm ok và row_hash tại các to_seq khớp email mốc đã gửi",
+        "Đo thời gian kiểm toàn chuỗi trên khoảng 13 triệu dòng giả (ước tính 7 năm), ghi số liệu để quyết định giữ kiểm toàn chuỗi hay chuyển kiểm đoạn (Q64); mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả",
+        "Vòng đời lượt kiểm: hai phiên quan sát được dòng đang chạy trong lúc kiểm; timeout hoặc kill phiên giữa chừng thì còn dòng finished_at rỗng hoặc result error làm bằng chứng và giám sát 23:30 JST báo audit_verification_missed; verify chạy đồng thời với 50 phiên ghi audit không chặn ghi và không thấy dòng commit sau snapshot; hai lượt chạy chồng nhau không ghi kết quả lẫn nhau",
+        "Mốc ngoài DB: có lượt nền ok và email mốc audit_anchor_daily đã gửi (lưu ngoài DB) trước khi sửa hoặc khôi phục; so row_hash tại to_seq với mốc đã gửi sau khi sửa dữ liệu hoặc restore",
+        "Quyền hàm: gọi trực tiếp audit_verify_chain và hàm giám sát bằng anon và authenticated đều bị từ chối và không tạo run, ops_alerts hay outbox; pg_cron và service role gọi được"
+      ],
+      "depends": [
+        "E09-BE-07",
+        "E09-DB-03",
+        "E10-AUD-02",
+        "E08-BE-08b"
+      ]
+    },
+    {
+      "key": "E09-QA-05",
+      "type": "qa",
+      "special": "audit bất biến + hash-chain (ADR-008)",
+      "title": "QA đầu cuối: S-041 tra cứu kiểm toán, S-042 tra tỷ lệ áp dụng và hiệu năng",
+      "goal": "Kiểm thử hai màn chỉ đọc và p95 theo yêu cầu.",
+      "specs": [
+        "FR-RPA-005, FR-RPA-006, FR-RPA-007",
+        "RPA_AUDIT_LOG_SEARCH_SPEC",
+        "RPA_RATE_VERSION_HISTORY_SPEC",
+        "NFR-PERF-01"
+      ],
+      "dod": [
+        "S-041: không điều kiện thì M_RPA_001 và không gọi API; mỗi điều kiện riêng và kết hợp AND trả đúng tập dòng; không bản ghi thì M_COM_021; chi tiết hiển thị đúng trước và sau, thời điểm thiết bị của bản ghi đồng bộ offline; sắp mới nhất trước, keyset qua ranh giới 20 dòng với nhiều bản ghi trùng thời điểm không lặp và không thiếu; thao tác tra cứu không sinh bản ghi audit; ROLE-007 không thấy H-6",
+        "Chuỗi băm: khi lượt gần nhất mismatch hoặc broken thì banner M_RPA_005 và dòng từ first_bad_seq được đánh dấu, tra cứu vẫn dùng được; tab Lượt kiểm hiển thị đủ cột và Tải thêm; chưa có lượt thì thông báo đúng; kiểm quyền: role ngoài ROLE-005 và ROLE-007 bị chặn, aal1 thì MFA_REQUIRED",
+        "S-042: tra giao dịch có gốc và delta (delta dùng phiên bản gốc, không phiên bản hiện hành sau khi đã có phiên bản mới), giao dịch di trú không có tỷ lệ thì Không xác định kèm M_RPA_002 và không phải lỗi HTTP, giao dịch chưa chốt thì M_COM_021, mã không tồn tại thì M_COM_007, chế độ ngày đúng 2 dòng, cả hai tham số thì VALIDATION; ROLE-006 vào được và không thấy liên kết sang S-038, S-031; ROLE-001..004, 007 bị chặn; tra giao dịch xác định được phiên bản không tạo dòng ops_alerts (chỉ ca không xác định có cảnh báo)",
+        "Hiệu năng: p95 của RPA_AUDIT_SEARCH và RPA_RATE_HISTORY_LIST không quá 2 giây trên dữ liệu đại diện (audit_logs nhiều năm, tối thiểu số dòng theo ước tính ở E09-QA-04); ghi cách đo, số mẫu, cách tính phân vị, kết quả; mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả",
+        "Cảnh báo không xác định: giao dịch di trú chưa từng điều chỉnh, tra lần đầu thì có đúng một ops_alerts rate_version_unknown theo trade_id và message M_RPA_002, tra lần hai không nhân đôi, sau khi cảnh báo được xác nhận thì tra lần ba ghi cảnh báo mới; giao dịch có rate_version_missing theo lần khóa vẫn có cảnh báo theo giao dịch; giao dịch tra ra phiên bản xác định được không tạo cảnh báo; mọi thao tác tra cứu vẫn không ghi audit_logs (khác với ops_alerts của ca không xác định)",
+        "Keyset lượt kiểm: nhiều lượt cùng started_at qua ranh giới 20 dòng không lặp và không thiếu, limit=1 luôn trả đúng lượt mới nhất"
+      ],
+      "depends": [
+        "E09-FE-04",
+        "E09-FE-05",
+        "E09-QA-04"
+      ]
+    },
+    {
+      "key": "E09-CLR-01",
+      "type": "clarify",
+      "title": "Làm rõ: SFTP kế toán, định dạng RPT-06, batch code, tên tệp, lịch và sandbox (Q4)",
+      "goal": "Q4 còn mở: host, định dạng CSV, mẫu tên tệp, định dạng batch code, lịch đẩy, tài khoản dịch vụ, sandbox, và xử lý tệp cũ sau 締め再開.",
+      "specs": [
+        "REQ-001 §8 Q4 (open)",
+        "RPA_DB §8 (Q4, Q14)",
+        "RPA_EXPORT_CENTER_SPEC A4",
+        "FR-RPA-003 AC5"
+      ],
+      "dod": [
+        "Có quyết định chấp nhận: các cột và định dạng CSV của RPT-06 (tối thiểu ngày nghiệp vụ, participant, tổng tiền, thuế, trạng thái, batch code), mã hóa, mẫu tên tệp, định dạng batch code, lịch đẩy, sandbox kế toán trước go-live, cách xử lý tệp cũ khi lần khóa 2 sinh tệp mới; ghi vào PREMISE; không ghi host hay khóa thật vào repo",
+        "Báo lại E09-BE-05c, E09-BE-06, E09-DOC-01a, E08-BE-08d (tuyến gửi) và E09-QA-03; không tự đặt giá trị khi chưa có quyết định"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E09-CLR-02",
+      "type": "clarify",
+      "title": "Làm rõ: cột CSV của các báo cáo, làm tròn Q90 và nội dung bộ báo cáo lần khóa từ 2",
+      "goal": "Spec chỉ nêu nguồn chức năng của 11 báo cáo, không có cột; Q90 còn mở; chưa rõ bộ báo cáo lần khóa 2 sinh đủ hay chỉ chênh lệch.",
+      "specs": [
+        "REQ-001 §8 Q90 (open), Q14 (đã chốt cho thưởng và báo cáo ngày)",
+        "RPA_DAILY_REPORTS_SPEC A2, A4",
+        "RPA_MONTHLY_REPORTS_SPEC A4",
+        "LAB-1 function-34, function-35"
+      ],
+      "dod": [
+        "Có quyết định chấp nhận: danh sách cột và thứ tự của RPT-01..05, 07..12 (ngoài RPT-06 ở E09-CLR-01), mã hóa tệp; nguồn của 'log trạng thái giao dịch' ở RPT-02 (không có bảng riêng); quy tắc SLA của RPT-09 (F-031 chưa phân tích); ghi vào PREMISE",
+        "Chốt Q90 cùng kế toán: floor áp từng dòng giao dịch rồi cộng hay áp trên tổng, và số âm (RPT-08) floor về âm vô cực hay cắt về 0 (giả định hiện tại: từng dòng, về âm vô cực)",
+        "Q14 đã chốt (cho cả thưởng và báo cáo ngày): giữ bản gốc, chỉ phần mới và delta, không ghi đè kết quả đã chốt; không hỏi lại nguyên tắc. Cần chốt cách thể hiện: bộ báo cáo lần khóa từ 2 vẫn đủ 9 dòng danh mục (AC1) với nội dung phần mới và delta hay cách khác, đối soát tổng với bộ lần 1, phạm vi báo cáo tháng khi ngày cuối tháng chốt lại và cận dưới của tập delta; báo lại E09-BE-05a..e, E09-QA-01, E09-DOC-01a"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E09-CLR-03",
+      "type": "clarify",
+      "title": "Làm rõ: thời hạn signed URL, tên tệp CSV và zip, một hay hai tệp zip khi tải 12 báo cáo",
+      "goal": "Thời hạn signed URL (QA-5 trong api-list, gắn Q31 còn mở), quy tắc đặt tên tệp, và câu hỏi OQ-2 của S-040 (QA-10).",
+      "specs": [
+        "api-list QA-5, QA-10",
+        "REQ-001 §8 Q31 (open)",
+        "RPA_DAILY_REPORTS_SPEC OQ-3",
+        "RPA_EXPORT_CENTER_SPEC OQ-2, OQ-6"
+      ],
+      "dod": [
+        "Có quyết định chấp nhận: thời hạn signed URL của CSV và zip, thời hạn lưu tệp zip tạm, quy tắc tên tệp CSV và zip (ví dụ {report_code}_{business_date}_#{lock_no}.csv), giữ hai tệp zip (ngày và tháng) ở S-040 hay thêm tham số nhận cả hai kỳ trong một lần gọi; ghi vào PREMISE",
+        "Báo lại E09-BE-02, E09-BE-03, E09-DOC-01a, E09-FE-03a; không tự đặt số khi chưa có quyết định"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E09-CLR-04",
+      "type": "clarify",
+      "title": "Làm rõ: người nhận mốc băm audit gửi ngoài DB hằng ngày (Q24)",
+      "goal": "Q24 còn mở: ngoài ROLE-007, người phụ trách kiểm toán phía khách là ai và gửi qua địa chỉ nào.",
+      "specs": [
+        "REQ-001 §8 Q24 (open)",
+        "ADR-008 R6",
+        "RPA_AUDIT_HASH_CHAIN_TECH §4.4 (bước 2)",
+        "Q16 (đã chốt: chuỗi băm đủ, không bắt buộc WORM)"
+      ],
+      "dod": [
+        "Có quyết định chấp nhận: danh sách người nhận mốc băm ngoài ROLE-007 và nơi giữ địa chỉ (secret của worker, không lưu trong repo), quy trình đối chiếu mốc khi kiểm toán và thiếu thư một ngày; ghi vào PREMISE",
+        "Báo lại E09-BE-07b, E09-DOC-01b, E08-BE-08b (người nhận audit_anchor_daily); không đưa địa chỉ email thật vào repo"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E09-CLR-05",
+      "type": "clarify",
+      "title": "Làm rõ: bảng nhóm loại thao tác sang action và cách ghép mã giao dịch với bản ghi audit liên quan",
+      "goal": "OQ-2 và OQ-3 của S-041: 5 nhóm F-4 ánh xạ sang action nào; tradeCode ghép với lot, giao hàng, điều chỉnh của giao dịch ra sao; độ dài tối đa mã giao dịch.",
+      "specs": [
+        "RPA_AUDIT_LOG_SEARCH_SPEC OQ-2, OQ-3, A3",
+        "AUDIT_DB §4.1.1",
+        "FR-RPA-005 AC1"
+      ],
+      "dod": [
+        "Có quyết định chấp nhận: bảng 5 nhóm (Tạo, Sửa, Phê duyệt, Khóa, Thay đổi quyền) sang danh sách action theo danh mục AUDIT_DB §4.1.1; cách ghép tradeCode với bản ghi liên quan (entity_type trade và các entity khác tham chiếu giao dịch: lot, giao hàng, điều chỉnh, bút toán); độ dài tối đa của mã giao dịch (mã di trú giữ mã gốc); ghi vào PREMISE",
+        "Báo lại E09-BE-08, E09-DOC-01b, E09-FE-04a, E09-QA-05"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E09-CLR-06",
+      "type": "clarify",
+      "title": "Làm rõ: cách xác định 'ngày nghiệp vụ cuối tháng' lúc khóa ngày để sinh RPT-10, 11, 12",
+      "goal": "Lúc khóa ngày D chưa biết có ngày nghiệp vụ nào sau D trong tháng hay không (ngày nghỉ, ngày chưa mở).",
+      "specs": [
+        "RPA_DB §3 (luồng báo cáo)",
+        "RPA_MONTHLY_REPORTS_SPEC A2",
+        "FR-RPA-002 AC1"
+      ],
+      "dod": [
+        "Có quyết định chấp nhận: điều kiện kích hoạt RPT-10, 11, 12 hằng tháng (ví dụ kiểm khi worker xử lý business_day_locked: tháng của business_date đã kết thúc theo JST và không có ngày nghiệp vụ lớn hơn trong tháng; nếu lúc khóa tháng chưa kết thúc thì thêm một tick cron đầu tháng sau hoặc cách khác), và hành vi khi ngày cuối tháng bị mở lại rồi chốt lại; ghi vào PREMISE",
+        "Báo lại E09-BE-05e, E09-BE-01b, E09-DOC-01a, E09-QA-01"
+      ],
+      "depends": []
+    }
+  ]
+}

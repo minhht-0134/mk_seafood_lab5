@@ -1,0 +1,901 @@
+{
+  "epic": {
+    "key": "E-10",
+    "title": "E-10 Nền tảng chung (khung dự án, DB, RLS và RPC, outbox, audit hash-chain)",
+    "goal": "Cung cấp lớp nền dùng chung cho mọi epic: khung dự án và môi trường, ngày nghiệp vụ và phiên bản quy chế, ghi audit nối chuỗi băm, outbox và cảnh báo vận hành, tầng route (proxy, bản đồ quyền, đổi lỗi, phân trang), SYS_ME và tải tệp chứng cứ, khung giao diện chung.",
+    "specs": [
+      "ADR-001",
+      "ADR-002",
+      "ADR-007",
+      "ADR-008",
+      "ADR-010",
+      "CORE_DB",
+      "AUDIT_DB",
+      "OUTBOX_DB",
+      "ARCH-01",
+      "ARCH-05",
+      "api-list §1, §2.1",
+      "error-codes §1",
+      "log-convention"
+    ],
+    "out_of_scope": [
+      "Các bảng và RPC nghiệp vụ của từng feature (E-01 đến E-09)",
+      "Worker nhận lô, gửi thông báo, thử lại, xử lý sự kiện nội bộ (E-08); job kiểm chuỗi băm, báo cáo và SFTP (E-09)",
+      "Loader di trú và bảng migration_* (E-11)",
+      "Điều kiện aal2 của get_my_role, hết phiên 30 phút, đăng nhập và MFA (E-01); component S-024 ADJ_LOCKED_DAY_BLOCK (E-04)",
+      "RPC nghiệp vụ đổi trạng thái ngày: rpc_day_close, rpc_day_reopen_request, rpc_day_reopen_decide (E-05); RPC tạo, duyệt phiên bản và job kích hoạt (E-06)"
+    ]
+  },
+  "issues": [
+    {
+      "key": "E10-DOC-01",
+      "type": "doc",
+      "title": "API Design: SYS_ME và SYS_EVIDENCE_UPLOAD_URL, quy ước chung của route",
+      "goal": "Soạn API Design cho 2 API dùng chung và chốt quy ước chung (envelope, mã lỗi, phân trang, idempotency) làm nền cho API Design của các epic khác.",
+      "specs": [
+        "api-list §1 (quy ước), §2.1 SYS",
+        "api-design/_index §2, §3",
+        "error-codes §1",
+        "BM-2-901-52",
+        "PREMISE (mục Thêm: API Design)"
+      ],
+      "dod": [
+        "Mỗi API một file {API_ID}_API.md theo mẫu BM-2-901-52: SYS_ME (mọi role, khóa response: profile, aal, current_business_day, mục điều hướng; không yêu cầu aal2 như nhóm /api/auth/**) và SYS_EVIDENCE_UPLOAD_URL (ROLE-003, 004, 005; body fileName, contentType, size; response path, signed_url, token nếu Storage cần)",
+        "Chốt quy ước chung một nơi để các API Design khác dẫn tới: envelope thành công, danh sách và lỗi ({code, params, fields, requestId}), bảng HTTP theo mã lỗi (error-codes §1.3), phân trang keyset (limit mặc định 20, tối đa 100, cursor mờ, next_cursor), đếm theo yêu cầu (withCount, counts, summary), Idempotency-Key, định dạng ngày giờ ISO, kiểu money floor JPY",
+        "Chốt quy tắc đặt path tệp chứng cứ (có tiền tố auth.uid()), giới hạn tệp (5 tệp mỗi hồ sơ, tối đa 10 MB mỗi tệp, jpg, png, pdf, chờ E10-CLR-02) và cách RPC kiểm sở hữu tệp trước khi nhận evidence_paths",
+        "Chốt cách SYS_ME đọc ngày nghiệp vụ hiện tại mà không ghi (hàm chỉ đọc), ghi chỗ hở: api-list nói chỉ đọc trạng thái nhưng current_business_day() là get-or-create",
+        "Chốt quyết định cho lỗi trigger có hint hợp lệ nhưng details hỏng: api-design/_index §2.2 ghi 500 INTERNAL_ERROR, error-codes §1.4 ghi vẫn trả code với params rỗng; chọn trả code với params rỗng và log ERROR (người dùng vẫn thấy đúng message theo code), sửa api-design/_index theo và ghi PREMISE; hint lạ vẫn là 500",
+        "Chốt giới hạn của dịch vụ Storage được chọn đối với signed upload URL (quyền mang theo token, thời hạn do dịch vụ quy định) và tách thời hạn tải lên khỏi thời hạn tải xuống; nếu đòi URL ràng buộc danh tính sau khi cấp thì đó là thay đổi thiết kế cần quyết định"
+      ],
+      "depends": [
+        "E10-CLR-02"
+      ]
+    },
+    {
+      "key": "E10-INF-01",
+      "type": "be",
+      "title": "Hạ tầng: khung dự án, quy trình migration và CI",
+      "goal": "Dựng khung Next.js App Router và Supabase theo ADR-001, quy trình migration đánh số, CI kiểm lỗi cú pháp, kiểu và kiểm tra tự động.",
+      "specs": [
+        "ADR-001 R1..R4, R7",
+        "ARCH-01 §2 (C1..C6)",
+        "primary-workflow (kiểm biên dịch)"
+      ],
+      "dod": [
+        "Khung dự án Next.js App Router (Server Component kiểm quyền, route handler /api/**) kết nối Supabase (@supabase/ssr), cấu hình kiểu TypeScript và lint; một lệnh kiểm biên dịch, kiểu, lint và test chạy được cục bộ và trong CI",
+        "Quy trình migration SQL đánh số, áp tuần tự, không sửa tệp đã áp (R7), chạy được trên cơ sở dữ liệu trống và trên cơ sở có dữ liệu; môi trường dev dùng seed giả, không dùng cho production; production không có script xóa hoặc TRUNCATE dữ liệu (ADR-008 §5)",
+        "CI chạy trên mỗi thay đổi: biên dịch, lint, test đơn vị, áp toàn bộ migration lên cơ sở trống; quét bí mật (khóa, token, tệp môi trường) và thất bại khi có; mô-đun client Supabase dùng khóa secret chỉ ở phía server (admin client), kiểm tự động rằng khóa này không vào gói client",
+        "Quy ước thư mục và tên tệp (kebab-case, tệp mã dưới 200 dòng) và danh sách lệnh ghi trong README dự án; một route mẫu GET và một POST ở dạng skeleton dùng stub được ghi rõ cho proxy, kiểm quyền và rpcToResponse (các thành phần thật do E10-PRX-01, E10-API-01, E10-API-02 cung cấp) để các epic khác bám theo khuôn; việc chạy hết chuỗi bằng thành phần thật kiểm ở E10-QA-03"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E10-INF-02",
+      "type": "be",
+      "title": "Hạ tầng: môi trường, triển khai và quản lý bí mật",
+      "goal": "Ba môi trường tách biệt (dev, staging, production), triển khai Vercel và Supabase, secret ngoài mã nguồn.",
+      "specs": [
+        "ADR-001 R5, R6",
+        "ARCH-01 §4",
+        "ARCH-05 §6",
+        "NFR-SEC-04",
+        "Q8 (chờ E10-CLR-01)"
+      ],
+      "dod": [
+        "Ba môi trường dev, staging, production cùng cấu hình, dữ liệu giả ở staging và dev; Vercel Functions và Supabase đặt cùng vùng (vùng và nhà cung cấp theo quyết định E10-CLR-01); ghi lại quy trình triển khai và khôi phục phiên bản",
+        "Bí mật (khóa secret Supabase, khóa email, khóa SSH, secret gọi worker) chỉ ở biến môi trường Vercel, secret của Edge Function hoặc Vault; không có trong repo, tài liệu hay log (NFR-SEC-04); chu kỳ xoay vòng ghi theo quyết định ở E10-CLR-01; kiểm tự động trong CI (cùng quét ở E10-INF-01) và rà tay một lần trước go-live",
+        "Toàn bộ kết nối dùng TLS (NFR-SEC-04); sandbox kế toán trước go-live là môi trường riêng (FR-RPA-003 AC5, theo E09-CLR-01); tách quyền truy cập production khỏi staging"
+      ],
+      "depends": [
+        "E10-INF-01",
+        "E10-CLR-01"
+      ]
+    },
+    {
+      "key": "E10-INF-03",
+      "type": "be",
+      "title": "Hạ tầng: sao lưu, khôi phục thảm họa và lưu trữ 7 năm",
+      "goal": "Sao lưu point-in-time đạt RPO 15 phút, RTO 4 giờ, chính sách lưu dữ liệu 7 năm và lưu trữ lạnh tệp sau 3 năm.",
+      "specs": [
+        "ADR-001 R6",
+        "ARCH-01 §4 (DR, Lưu trữ)",
+        "NFR-AVL-03",
+        "DR-RET-01",
+        "FR-RPA-004 AC5",
+        "Q8, Q31 (chờ E10-CLR-01, E10-CLR-02)"
+      ],
+      "dod": [
+        "Cấu hình sao lưu point-in-time đủ RPO không quá 15 phút (gói dịch vụ theo quyết định E10-CLR-01) và quy trình khôi phục đạt RTO không quá 4 giờ; ghi biên bản diễn tập khôi phục (kiểm ở E10-QA-05)",
+        "Chính sách lưu: dữ liệu nghiệp vụ online 7 năm, kể cả audit_logs (FR-RPA-004 AC5, ước tính khoảng 13 triệu dòng sau 7 năm theo RPA_AUDIT_HASH_CHAIN_TECH §4.3); ảnh và chứng từ online 3 năm rồi chuyển lạnh, khôi phục lạnh không quá 2 ngày; xóa vật lý sau hạn phải có phê duyệt (DR-RET-01); chi tiết nơi lưu tệp theo E10-CLR-02",
+        "Khôi phục từ bản sao lưu trên staging giữ nguyên chuỗi băm audit (checker của E-10 cho kết quả ok và row_hash tại các to_seq khớp mốc đã lưu bằng fixture, ADR-008 §4; xác nhận bằng job và mốc thật của E-09 ở QA tích hợp), không dùng TRUNCATE hay script reset"
+      ],
+      "depends": [
+        "E10-INF-02",
+        "E10-CLR-01",
+        "E10-CLR-02"
+      ]
+    },
+    {
+      "key": "E10-INF-04",
+      "type": "be",
+      "title": "Hạ tầng: giám sát vận hành và đo khả dụng",
+      "goal": "Health check, cảnh báo lỗi bốn loại của NFR-OPS-01 và đo khả dụng độc lập.",
+      "specs": [
+        "NFR-OPS-01",
+        "NFR-AVL-01",
+        "log-convention §2, §4",
+        "Q5 (chờ E10-CLR-03)"
+      ],
+      "dod": [
+        "Điểm kiểm tra sức khỏe (ứng dụng, cơ sở dữ liệu, Auth, worker) và đo khả dụng bằng nhật ký uptime độc lập, báo cáo hằng tháng 99,5 phần trăm trong 02:00 đến 10:00 JST (NFR-AVL-01), trừ bảo trì đã báo",
+        "Đủ 4 loại cảnh báo của NFR-OPS-01: sức khỏe hệ thống, lỗi batch và xuất, lỗi gửi thông báo, sự kiện bảo mật; ba loại sau đi qua ops_alerts của E10-OBX-03 và hàng đợi ROLE-007, loại sức khỏe đi kênh vận hành bên ngoài ứng dụng; ngưỡng và người nhận theo E10-CLR-03, không tự đặt số",
+        "Log theo thư viện E10-LOG-01 được gom và tìm theo requestId; diễn tập cảnh báo: mô phỏng từng loại lỗi và xác nhận cảnh báo đến đúng nơi"
+      ],
+      "depends": [
+        "E10-INF-02",
+        "E10-LOG-01",
+        "E10-OBX-03",
+        "E10-CLR-03"
+      ]
+    },
+    {
+      "key": "E10-LOG-01",
+      "type": "be",
+      "title": "Thư viện log vận hành: dòng JSON, requestId, mức log và danh mục msg",
+      "goal": "Một thư viện log dùng cho route handler, proxy, RPC wrapper và Edge Function.",
+      "specs": [
+        "log-convention §1..§4, §9",
+        "ADR-002 R5",
+        "NFR-SEC-04"
+      ],
+      "dod": [
+        "Mỗi dòng log là một đối tượng JSON gồm ts (UTC, hậu tố Z), level, category theo log-convention §4 đầy đủ (proxy, auth, api, rpc, worker.notify, worker.sftp, worker.report, job, sync, migration; client chờ quyết định mở của nguồn, không tự thêm endpoint), msg cố định dạng {đối tượng}.{hành động} {kết quả} (không nối dữ liệu người dùng vào msg), requestId, userId, role, route, rpc, code, status, durationMs; dữ liệu riêng ở trường riêng",
+        "Sáu mức log (TRACE, DEBUG, INFO, WARN, ERROR, FATAL) với nghĩa của log-convention §2; production tắt TRACE và DEBUG; ghi guard.trigger_blocked ở mức WARN khi trigger chặn ghi (trigger raise nên không ghi được audit, ADR-006 R8)",
+        "requestId sinh ở proxy hoặc route, đi qua RPC wrapper và trả trong body lỗi; không bao giờ ghi token, mật khẩu, khóa API, host hay khóa SSH, email người dùng, before và after của audit; có kiểm tự động quét đầu ra log của ca test để bảo đảm không rò các giá trị này",
+        "Danh mục msg ở log-convention §4.1 được nạp thành hằng số dùng chung để các epic khác không tự đặt chuỗi; lỗi PostgREST hoặc constraint chỉ ghi log kèm requestId, không trả ra client",
+        "Trường bắt buộc theo loại sự kiện: aal (proxy, auth và mọi dòng log route, kể cả route API nghiệp vụ, của ROLE-005, 006, 007), outboxEventId và attempt (worker), pgCode (lỗi cơ sở dữ liệu), recipientUserId và channel (worker.notify); có log mẫu kiểm từ từng nhóm bên gọi (đăng nhập, đồng bộ, sinh báo cáo, loader) và một request API nghiệp vụ của role bắt buộc, dòng API phải có aal1 hoặc aal2 đúng với JWT (không chỉ dòng proxy hay đăng nhập)"
+      ],
+      "depends": [
+        "E10-INF-01"
+      ]
+    },
+    {
+      "key": "E10-DB-01",
+      "type": "db",
+      "title": "Migration nền: enum, extension, profiles gốc, quyền mặc định và hàm today_tokyo, get_my_role, has_role",
+      "goal": "Lớp nền của schema public mà mọi migration khác dựa vào.",
+      "specs": [
+        "database-design/_index §5.1, §5.2",
+        "ADR-002 R1, R2",
+        "ADR-010 R4",
+        "ADR-011 R1",
+        "ARCH-05 §3"
+      ],
+      "dod": [
+        "Enum app_role đủ 7 giá trị (ROLE-001..007) và account_status gồm active, temp_locked, disabled; extension cần cho ADR-007 và ADR-008 (pg_cron từ phiên bản 1.5, pg_net) được bật ở E10-OBX-04",
+        "Bảng profiles gốc 7 cột (id khóa ngoại tới auth.users, email, employee_code, full_name, role, status, created_at) theo prototype; RLS bật và chỉ có policy SELECT (chính mình, ROLE-007 đọc tất cả); phần mở rộng khóa đăng nhập, chỉ mục duy nhất theo lower(email) và view profiles_brief thuộc E01-DB-01",
+        "Hàm today_tokyo() (grant execute cho authenticated), get_my_role() (trả role khi status là active, ngược lại null; điều kiện aal thêm ở E01-BE-06) và has_role(variadic) đều security definer với search_path rỗng; get_my_role trả null cho tài khoản không active nên RLS đọc 0 dòng ngoài hồ sơ của chính mình",
+        "Quyền mặc định: thu quyền execute khỏi PUBLIC (PostgreSQL cấp execute cho PUBLIC mặc định, chỉ thu khỏi anon và authenticated là chưa đủ), anon và authenticated trên mọi hàm hiện có, và với đối tượng tạo sau đặt alter default privileges for role (role chạy migration) revoke execute on functions from PUBLIC, anon, authenticated ở phạm vi toàn cục, không dùng IN SCHEMA (REVOKE theo schema không loại grant mặc định toàn cục của PUBLIC; rà riêng các default grant theo schema đã có); thu mọi quyền ghi bảng và quyền sequence khỏi anon và authenticated (ADR-002 R1); chỉ grant execute theo danh sách cho phép tường minh (hàm đọc và RPC công khai); service_role giữ thu quyền update, delete, truncate ở các bảng quan trọng được bổ sung theo từng migration; không policy INSERT, UPDATE, DELETE nào cho authenticated trên bất kỳ bảng nào",
+        "Migration chạy được trên cơ sở dữ liệu trống và trên cơ sở có dữ liệu seed; mã sinh bởi sequence của từng bảng nghiệp vụ do epic sở hữu bảng đó tạo (E10 không tạo)"
+      ],
+      "depends": [
+        "E10-INF-01"
+      ]
+    },
+    {
+      "key": "E10-DB-02",
+      "type": "db",
+      "special": "MFA",
+      "title": "Migration nền: hàm helper chung cho RPC và trigger (check_access, deny_update_delete, raise_guard)",
+      "goal": "Một nơi cho thứ tự kiểm aal rồi has_role, trigger chặn sửa xóa và cách raise lỗi trigger mang mã.",
+      "specs": [
+        "ADR-002 R2, R4, R8",
+        "ADR-010 R4",
+        "error-codes §1.2, §1.4",
+        "api-design/_index §2.2",
+        "database-design/_index §5.2"
+      ],
+      "dod": [
+        "check_access(variadic role): với role ROLE-005, 006, 007 đọc auth.jwt() ->> 'aal' tường minh trước has_role: khác aal2 thì trả {ok:false, code:'MFA_REQUIRED'}; sau đó has_role sai thì {ok:false, code:'FORBIDDEN'}; tài khoản không active cũng FORBIDDEN; không dựa vào get_my_role trả null (sẽ ra FORBIDDEN, sai hướng dẫn người dùng); hàm security definer, search_path rỗng",
+        "Hàm trigger deny_update_delete() chặn UPDATE và DELETE cho các bảng chỉ thêm (dùng bởi migration_record_links, trade_adjustment_entries, incentive_results, participant_status_history, dispute_updates, notification_send_logs và các bảng khác khai báo), cùng mẫu thu quyền update, delete, truncate khỏi service_role",
+        "Hàm raise_guard(hint, params) phát exception errcode P0001 với hint là mã lỗi (DAY_LOCKED, INVALID_STATE...) và detail là JSON {\"params\":[...]} đúng khuôn rpcToResponse đọc (E10-API-ERROR-MAPPING); mọi trigger bảo vệ của các epic dùng hàm này thay vì tự raise",
+        "Mẫu RPC từ chối nghiệp vụ trả {ok:false, code, params?, fields?, message?} (không raise) để audit guard.* vẫn commit; message chỉ để log; tài liệu mẫu (comment hoặc tệp hướng dẫn) cho các epic viết RPC đúng khuôn: aal, has_role, khóa hàng theo thứ tự chuẩn, nghiệp vụ, write_audit cuối"
+      ],
+      "depends": [
+        "E10-DB-01"
+      ]
+    },
+    {
+      "key": "E10-DB-03",
+      "type": "db",
+      "special": "締め再開 hai người (ADR-005)",
+      "title": "Migration ngày nghiệp vụ: business_days, business_day_locks, day_reopen_requests",
+      "goal": "Ba bảng của vòng đời ngày nghiệp vụ, lần khóa và yêu cầu 締め再開.",
+      "specs": [
+        "CORE_DB §4.1, §4.2, §4.3, RLS",
+        "ADR-005 R2, R4, R5",
+        "FR-CLS-002, FR-CLS-004",
+        "Q1, Q54 (đã chốt)"
+      ],
+      "dod": [
+        "business_days theo CORE_DB §4.1 (cột id identity always, kiểu, default và nullability theo đúng bảng; tương tự cho hai bảng còn lại): id, business_date (duy nhất, ngày JST), status (CHECK open, locked, reopen_requested, reopened; mặc định open), closed_by (khóa ngoại profiles), closed_at; CHECK (status thuộc locked hoặc reopen_requested) bằng (closed_at không rỗng); chỉ mục duy nhất business_date làm đích on conflict của current_business_day()",
+        "business_day_locks: id, business_day_id (khóa ngoại), lock_no (CHECK lớn hơn hoặc bằng 1, duy nhất cùng business_day_id), locked_by, locked_at (mặc định now(), rpc_day_close gán clock_timestamp() sau khóa hàng), unlocked_at (ghi một lần), source (CHECK live, migration); chỉ mục duy nhất một phần business_day_id khi unlocked_at rỗng (một lần khóa hiệu lực mỗi ngày) và chỉ mục duy nhất (id, business_day_id) làm đích khóa ngoại ghép",
+        "day_reopen_requests: business_day_id, lock_id, status (CHECK pending, approved, rejected), reason (không rỗng, tối đa 500 ký tự), requested_by, requested_at, decided_by (CHECK khác requested_by), decided_at, decision_note (bắt buộc khi rejected, tối đa 500 ký tự); CHECK (status là pending) bằng (decided_by rỗng); chỉ mục duy nhất một phần khi pending theo business_day_id, và khi approved theo lock_id; khóa ngoại ghép (lock_id, business_day_id) tới business_day_locks bảo đảm lần khóa thuộc đúng ngày",
+        "RLS bật, chỉ policy SELECT: business_days cho ROLE-003 và ROLE-005, business_day_locks và day_reopen_requests cho ROLE-005 (aal2 qua get_my_role); ghi chỉ qua RPC của E-05; không grant ghi cho authenticated; service_role bị thu update, delete, truncate trên business_days (M12)"
+      ],
+      "depends": [
+        "E10-DB-01",
+        "E10-DB-02"
+      ]
+    },
+    {
+      "key": "E10-DB-04",
+      "type": "db",
+      "special": "khóa ngày hai lớp (F-018)",
+      "title": "Migration ngày nghiệp vụ: trigger chuyển trạng thái, current_business_day, lock_day_open, guard_locked_business_day",
+      "goal": "Trigger và hàm bảo vệ vòng đời ngày, dùng chung cho mọi RPC và trigger khóa ngày.",
+      "specs": [
+        "CORE_DB (Trigger và hàm liên quan, Thứ tự khóa chuẩn)",
+        "ADR-005 R5",
+        "ADR-002 R4",
+        "ARCH-04 BP-c"
+      ],
+      "dod": [
+        "Trigger business_days_guard_transitions thay trigger khóa vĩnh viễn: chỉ cho open sang locked, locked sang reopen_requested, reopen_requested sang locked hoặc reopened, reopened sang locked; cấm đổi business_date; cấm xóa ngày đã từng khóa; chuyển trái phép bị raise qua raise_guard của E10-DB-02",
+        "current_business_day() get-or-create ngày hôm nay (today_tokyo) bằng on conflict (business_date), không đọc market_holidays (Q57 giữ nguyên hành vi: ngày tạo khi có thao tác đầu tiên kể cả ngày nghỉ); chạy đồng thời nhiều phiên không tạo hai dòng và không lỗi",
+        "lock_day_open(p_day) trả true khi ngày open hoặc reopened (FOR SHARE), không phân biệt hôm nay (việc chỉ tạo mới giao dịch vào ngày reopened khi đó là hôm nay do RPC tạo và trigger trades_guard_locked_day của E-04 đảm nhiệm)",
+        "guard_locked_business_day() là hàm trigger dùng chung (security definer, đọc business_days FOR SHARE) cho bảng khác (delivery_parts, delivery_exceptions, trade_adjustment_entries, disputes khi insert): chặn khi ngày locked hoặc reopen_requested bằng raise_guard hint DAY_LOCKED, detail params [business_date, status] (ISO); không ghi audit được (trigger raise làm rollback), chỉ log guard.trigger_blocked ở route",
+        "Hàm đọc hẹp current_business_day_readonly() (security definer, search_path rỗng, grant cho authenticated): chỉ trả business_date và status của ngày hôm nay, không INSERT; ngày chưa có dòng thì trả ngày hôm nay với trạng thái open mà không tạo dòng; ngày locked, reopen_requested, reopened trả đúng trạng thái dù RLS business_days che dòng với role đó; không mở SELECT toàn bảng cho mọi role"
+      ],
+      "depends": [
+        "E10-DB-03",
+        "E10-DB-02"
+      ]
+    },
+    {
+      "key": "E10-DB-05",
+      "type": "db",
+      "special": "業務規程 có phiên bản",
+      "title": "Migration phiên bản: rule_versions, rule_versions_guard, active_rule_version() và danh mục params 業務規程",
+      "goal": "Bảng phiên bản 業務規程 và tỷ lệ 完納奨励金, bất biến vòng đời, hàm tra phiên bản hiệu lực.",
+      "specs": [
+        "CORE_DB §4.4, Trigger và hàm liên quan",
+        "ADR-003 R1, R4, R5, R7, R8",
+        "INC_RULE_VERSIONING_TECH §5",
+        "Q1, Q2, Q12, Q15, Q17, Q25 (đã chốt)"
+      ],
+      "dod": [
+        "rule_versions 21 cột theo CORE_DB §4.4: version_code (duy nhất), kind (CHECK market_rule, incentive_rate), status (CHECK pending_approval, scheduled, active, superseded, cancelled, rejected), effective_from, params JSONB (chỉ market_rule), incentive_rate NUMERIC(5,2) (CHECK kind incentive_rate bằng tỷ lệ không rỗng, từ 0 đến 100, phần trăm hai chữ số theo Q25), rollback_of_id (tự tham chiếu), các cột lập, duyệt, từ chối, hủy, kích hoạt, hết hiệu lực; CHECK approved_by khác created_by và rejected_by khác created_by, CHECK (status là rejected) bằng (rejected_by không rỗng) và (rejected_by rỗng) bằng (rejected_at rỗng), lý do từ chối và hủy bắt buộc và tối đa 500 ký tự",
+        "Chỉ mục duy nhất một phần rule_versions_active_uq (kind) khi active (mỗi loại một bản hiệu lực) và rule_versions_scheduled_uq (kind, effective_from) khi scheduled; khóa ngoại tới profiles và tự tham chiếu; RLS SELECT cho ROLE-005 và ROLE-006 (aal2), ghi chỉ qua RPC và job của E-06",
+        "Trigger rule_versions_guard: không sửa params hoặc incentive_rate sau khi tạo, chuyển trạng thái đúng vòng đời, cancel_reason chỉ ghi một lần cùng lúc chuyển scheduled sang cancelled; sửa trái phép bị raise qua raise_guard",
+        "active_rule_version(kind, date) trả phiên bản áp dụng cho ngày nghiệp vụ (đúng cả khi job kích hoạt trễ, vì không phụ thuộc job); danh mục khóa params market_rule: reopen_window_days (số nguyên từ 1, mặc định giả định 3), conditional_release_conditions (mảng {code, label}, code duy nhất, từ 1 phần tử), market_holidays (mảng ngày ISO duy nhất), default_participation_limit_jpy (số nguyên không âm hoặc null); hàm kiểm kiểu params dùng cho RPC tạo của E-06 (sai kiểu thì VALIDATION)",
+        "Thiếu bản hiệu lực hoặc thiếu khóa params thì RPC dùng khóa từ chối an toàn kèm ops_alerts rule_param_missing (E10-OBX-03)"
+      ],
+      "depends": [
+        "E10-DB-01",
+        "E10-DB-02"
+      ]
+    },
+    {
+      "key": "E10-AUD-01",
+      "type": "db",
+      "special": "audit bất biến + hash-chain (ADR-008)",
+      "title": "Migration audit_logs: bảng 17 cột, chỉ mục và bất biến (trigger, thu quyền)",
+      "goal": "Bảng nhật ký kiểm toán chỉ thêm, chặn sửa xóa với mọi role, chặn chèn trực tiếp.",
+      "specs": [
+        "AUDIT_DB §4.1, RLS, Trigger và hàm",
+        "RPA_AUDIT_HASH_CHAIN_TECH §4.2",
+        "ADR-008 R1",
+        "FR-RPA-004 AC4, FR-RPA-007 AC4"
+      ],
+      "dod": [
+        "Đường dựng mới (cơ sở trống) tạo bảng đầy đủ với các cột băm NOT NULL; đường nâng cấp cơ sở đã có audit_logs 11 cột chạy theo E10-AUD-03 (thêm cột chuyển tiếp cho phép rỗng rồi mới siết); audit_logs 17 cột theo AUDIT_DB §4.1: id (identity always), occurred_at, actor_id (không khóa ngoại), actor_role (text, giá trị app_role hoặc system), action, entity_type, entity_id, before, after, reason, business_day_id (không khóa ngoại), chain_seq (duy nhất, liên tục từ 1), prev_hash BYTEA 32, row_hash BYTEA 32, hash_version SMALLINT mặc định 1, participant_id (không khóa ngoại), device_recorded_at",
+        "Chỉ mục theo AUDIT_DB: audit_logs_entity_idx (entity_type, entity_id), audit_logs_chain_seq_key (duy nhất chain_seq), audit_logs_occurred_at_idx, audit_logs_participant_idx (participant_id, occurred_at, một phần khi không rỗng), audit_logs_action_idx (action, occurred_at)",
+        "Trigger audit_logs_no_update_delete (audit_logs_immutable) chặn UPDATE và DELETE mọi role kể cả ROLE-007 và service_role; trigger câu lệnh audit_logs_no_truncate chặn TRUNCATE; thu update, delete, truncate khỏi service_role; thu insert khỏi service_role, authenticated, anon (chèn giả phải qua write_audit); các vi phạm đều lỗi và không ghi được",
+        "RLS bật, policy audit_logs_select cho ROLE-005 và ROLE-007 (cần aal2 qua get_my_role); production không có script xóa hoặc TRUNCATE; chủ sở hữu (postgres) vẫn tắt được trigger, khe hở này chỉ phát hiện được ở E09-BE-07 và mốc ngoài DB (ghi rõ, không hứa ngăn chặn)"
+      ],
+      "depends": [
+        "E10-DB-01",
+        "E10-DB-02"
+      ]
+    },
+    {
+      "key": "E10-AUD-02",
+      "type": "be",
+      "special": "audit bất biến + hash-chain (ADR-008)",
+      "title": "write_audit: nối chuỗi băm SHA-256, khóa chuỗi lấy cuối cùng, hàm chuẩn hóa dùng chung",
+      "goal": "Hàm ghi audit duy nhất, chạy trong giao dịch nghiệp vụ, cấp chain_seq và băm.",
+      "specs": [
+        "RPA_AUDIT_HASH_CHAIN_TECH §4.1, §5",
+        "AUDIT_DB §4.1 (chuẩn hóa băm), Trigger và hàm",
+        "ADR-008 R2, R3",
+        "ADR-002 R3, R8"
+      ],
+      "dod": [
+        "write_audit(p_action, p_entity_type, p_entity_id, p_before, p_after, p_reason, p_business_day_id, p_participant_id default null, p_device_recorded_at default null) là hàm security definer với search_path rỗng, thu execute khỏi PUBLIC, anon và authenticated; chỉ RPC definer gọi được; actor_id là auth.uid() (không nhận từ tham số), actor_role là role trong profiles hoặc system khi không có auth.uid()",
+        "Lấy pg_advisory_xact_lock(hashtextextended('public.audit_logs.chain', 0)) là khóa cuối cùng của giao dịch (sau mọi FOR UPDATE, FOR SHARE hàng nghiệp vụ, theo thứ tự khóa chuẩn của CORE_DB); đọc chain_seq và row_hash lớn nhất rồi chèn chain_seq cộng 1 (dòng đầu: seq 1, prev_hash 32 byte 0); giao dịch rollback không để lỗ hổng chain_seq",
+        "Hàm chuẩn hóa immutable một nguồn dùng chung cho write_audit và audit_verify_chain (E09-BE-07a): chuỗi jsonb_build_object gồm đúng chain_seq, occurred_at, actor_id, actor_role, action, entity_type, entity_id, before, after, reason, business_day_id, participant_id, device_recorded_at, hash_version (không gồm id, prev_hash, row_hash); thời gian đổi sang text UTC YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\" trước khi băm; row_hash là sha256(prev_hash nối chuỗi UTF8) bằng hàm pg_catalog.sha256; cùng dữ liệu ở TimeZone Asia/Tokyo và UTC cho cùng băm",
+        "occurred_at gán tường minh clock_timestamp() để chuỗi chuẩn và cột cùng giá trị; vi phạm audit_logs_chain_seq_key (chỉ khi ai đó chèn ngoài write_audit) thì exception, rollback cả giao dịch nghiệp vụ, route nhận 500 INTERNAL_ERROR kèm log pgCode 23505; chờ khóa quá lock_timeout thì 500 kèm pgCode 55P03 và client thử lại; write_audit không ghi log",
+        "Nhánh từ chối nghiệp vụ guard.write_blocked cũng gọi write_audit ở bước cuối trước return; tài liệu thứ tự khóa chuẩn nêu rõ cho mọi epic (RPC lấy advisory lock rồi mới khóa hàng là bị cấm vì deadlock với rpc_day_close); kiểm thử chi tiết ở E09-QA-04"
+      ],
+      "depends": [
+        "E10-AUD-01"
+      ]
+    },
+    {
+      "key": "E10-AUD-03",
+      "type": "be",
+      "special": "audit bất biến + hash-chain (ADR-008)",
+      "title": "Script nối chuỗi băm cho dữ liệu audit có trước migration",
+      "goal": "Một lần chạy trước go-live cho môi trường đã có audit_logs cũ, rồi một lượt kiểm nền.",
+      "specs": [
+        "RPA_AUDIT_HASH_CHAIN_TECH §5 (Tiền đề)",
+        "AUDIT_DB (Khác prototype)",
+        "ADR-008 §4"
+      ],
+      "dod": [
+        "Trình tự nâng cấp trong cửa sổ bảo trì: dừng ghi, thêm cột băm và chain_seq cho phép rỗng, backfill (chủ sở hữu chạy có kiểm soát, tắt trigger bất biến tạm thời và ghi lại việc này; không gán băm giả để vượt NOT NULL), kiểm chuỗi, đặt NOT NULL cùng chỉ mục duy nhất, bật lại trigger, chuyển writer sang write_audit rồi mới mở ghi; Script backfill nối chuỗi theo thứ tự id cho các dòng audit_logs có trước migration (môi trường staging, demo có dữ liệu cũ), gán chain_seq liên tục, prev_hash, row_hash, hash_version 1 bằng đúng hàm chuẩn hóa của E10-AUD-02; chạy được một lần, chạy lại không đổi kết quả (idempotent)",
+        "Sau backfill kiểm chuỗi bằng checker của E-10 dùng hàm chuẩn hóa dùng chung (kết quả ok); xác nhận bằng job audit_verify_chain của E-09 thuộc QA tích hợp (E09-QA-04), E-10 không chờ E-09; môi trường production bắt đầu trống nên không cần backfill, ghi rõ trong tài liệu cutover; script không có trên production sau khi dùng và không dùng TRUNCATE",
+        "Fixture audit 11 cột có dữ liệu: chạy nâng cấp cho kết quả chuỗi hợp lệ theo checker dùng hàm chuẩn hóa dùng chung của E10-AUD-02; chạy lại không đổi chuỗi; đường cơ sở trống chạy riêng và không đi qua backfill"
+      ],
+      "depends": [
+        "E10-AUD-02"
+      ]
+    },
+    {
+      "key": "E10-OBX-01",
+      "type": "db",
+      "special": "outbox + worker (ADR-007)",
+      "title": "Migration outbox_events: 15 cột, danh mục 15 loại sự kiện và chỉ mục",
+      "goal": "Bảng outbox dùng chung cho mọi RPC và job phát sự kiện.",
+      "specs": [
+        "OUTBOX_DB §4.1, §4.1.1, RLS",
+        "ADR-007 R1, R5a, R7",
+        "FR-NTF-001, FR-NTF-002"
+      ],
+      "dod": [
+        "Cột theo OUTBOX_DB §4.1: id, event_type (CHECK đủ 15 loại: participant_expiring, dispute_opened, export_failed, delivery_overdue, business_day_locked, report_rpt06_ready, rule_version_activated, audit_anchor_daily, day_reopen_requested, day_reopen_decided, business_day_relocked, audit_chain_alert, mfa_factor_removed, adjustment_requested, adjustment_decided), dedup_key (duy nhất), payload JSONB (không chứa secret), is_critical, status (CHECK pending, processing, sent, retry_wait, failed), attempt_count, max_attempts (mặc định 1), next_attempt_at, locked_at, last_error, business_day_id (khóa ngoại), created_at, sent_at, failed_at",
+        "Chỉ mục: outbox_events_pkey, outbox_events_dedup_key_key (duy nhất), outbox_events_due_idx (status, next_attempt_at) một phần khi pending hoặc retry_wait; khóa ngoại business_day_id NO ACTION; không trigger (bất biến giữ bằng quyền ghi chỉ qua hàm definer)",
+        "RLS bật, SELECT chỉ ROLE-007; chèn qua outbox_emit của E10-OBX-02 và job; cập nhật trạng thái chỉ qua hàm definer của worker (E08-BE-08a, 08c, thu execute khỏi authenticated); không grant ghi cho authenticated",
+        "Danh mục loại sự kiện (bảng hằng hoặc hàm) khớp OUTBOX_DB §4.1.1: nhóm, is_critical (cố định hoặc theo cấu hình), max_attempts (Critical 4; nội bộ kích hoạt job 3; report_rpt06_ready 4; thông báo thường và trong ứng dụng 1), khuôn dedup_key theo từng loại; max_attempts nội bộ là 3 ở cả OUTBOX_DB và NTF_CRITICAL_RETRY_TECH §3 (nhóm SFTP mới là 4), không có mâu thuẫn"
+      ],
+      "depends": [
+        "E10-DB-03"
+      ]
+    },
+    {
+      "key": "E10-OBX-02",
+      "type": "be",
+      "special": "outbox + worker (ADR-007)",
+      "title": "Hàm outbox_emit: chèn sự kiện cùng giao dịch, gán mặc định theo loại, chống trùng",
+      "goal": "Một điểm phát sự kiện cho mọi RPC và job, thay cho INSERT tự viết ở từng epic.",
+      "specs": [
+        "OUTBOX_DB §4.1, §4.1.1 (quy tắc phát)",
+        "ADR-007 R1, R5a, R7",
+        "NTF_CRITICAL_RETRY_TECH §4.1"
+      ],
+      "dod": [
+        "outbox_emit(event_type, payload, dedup_key, business_day_id, is_critical default null) là hàm helper nội bộ (không phải API công khai: thu execute khỏi PUBLIC, anon, authenticated, chỉ RPC security definer và job gọi được; người dùng không tự tạo sự kiện được) chèn đúng một dòng outbox_events trong cùng giao dịch với RPC gọi; gán tường minh max_attempts, is_critical (theo danh mục, hoặc theo cờ cấu hình F-030 do RPC truyền) và next_attempt_at cho từng loại, không để rơi về mặc định max_attempts 1 với loại Critical hoặc nội bộ",
+        "Chống trùng: on conflict (dedup_key) do nothing, trả về cho biết có chèn hay đã tồn tại; dedup_key sai khuôn của loại thì lỗi; giao dịch rollback thì không có sự kiện; Sự kiện Critical (is_critical true) vừa chèn mới tự gọi hàm kick (không kick lại khi nhánh on conflict cho biết dedup đã tồn tại) pg_net của E10-OBX-04 trong cùng giao dịch để yêu cầu được gửi sau commit (rollback thì không có yêu cầu), lỗi kick không làm mất dòng pending; chỉ phát khi có bên tiêu thụ (không phát cho tạo, chốt, hủy giao dịch thường, không phát cho duyệt điều chỉnh sau khóa)",
+        "Payload kiểm không chứa khóa bí mật, tiền, lý do hay thông tin cá nhân vượt mức cần cho bên nhận (các epic phát sự kiện khai khóa payload ở API Design của mình); thông báo thường F-030 bị lỗi chỉ ghi log, không ops_alerts (do E-08)",
+        "outbox_emit trả về id dòng và cờ đã chèn hoặc đã tồn tại (hợp đồng kiểu trả về cố định) để bên cần liên kết outbox (ví dụ E09-BE-07b lưu anchor_outbox_event_id) không phải đoán"
+      ],
+      "depends": [
+        "E10-OBX-01",
+        "E10-DB-02",
+        "E10-OBX-04"
+      ]
+    },
+    {
+      "key": "E10-OBX-03",
+      "type": "db",
+      "special": "outbox + worker (ADR-007)",
+      "title": "Migration ops_alerts và hàm ops_alert_record: hàng đợi cảnh báo vận hành",
+      "goal": "Bảng cảnh báo cho ROLE-007 và hàm ghi cảnh báo dùng chung.",
+      "specs": [
+        "OUTBOX_DB §4.2, RLS",
+        "NFR-OPS-01",
+        "ADR-007 R5a",
+        "FR-NTF-002 AC3"
+      ],
+      "dod": [
+        "ops_alerts 10 cột: id, alert_type (CHECK đủ 13 giá trị: notification_failed, no_recipient, expiry_threshold_missing, rate_version_missing, rate_version_unknown, report_source_missing, sftp_failed, outbox_stale, audit_chain_mismatch, audit_verification_missed, account_temp_locked, job_failed, rule_param_missing), severity (CHECK warning, critical), message (tiếng Việt, đọc được không cần tra mã), payload (không secret), source_event_id (khóa ngoại outbox_events, rỗng khi do job sinh), business_day_id (khóa ngoại), created_at, acknowledged_by (khóa ngoại profiles), acknowledged_at; chỉ mục ops_alerts_open_idx (created_at) một phần khi acknowledged_at rỗng",
+        "RLS bật, SELECT chỉ ROLE-007 (aal2); chèn bởi worker, job và RPC nghiệp vụ qua hàm ops_alert_record; xác nhận qua rpc_ops_alert_ack của E-08; không xóa, không grant ghi cho authenticated",
+        "ops_alert_record(alert_type, severity, message, payload, source_event_id, business_day_id) là hàm nội bộ (security definer, thu execute khỏi PUBLIC, anon, authenticated; chỉ RPC definer, job và worker gọi được) ghi một dòng, có tùy chọn chống trùng theo (alert_type, khóa trong payload) khi đã có dòng cùng khóa chưa xác nhận (dùng cho outbox_stale, report_source_missing, rate_version_unknown); mức severity mặc định theo loại do từng epic chốt (OQ-8 của S-037, không tự đặt ở đây)"
+      ],
+      "depends": [
+        "E10-OBX-01",
+        "E10-DB-03",
+        "E10-DB-01"
+      ]
+    },
+    {
+      "key": "E10-OBX-04",
+      "type": "be",
+      "special": "outbox + worker (ADR-007)",
+      "title": "Hạ tầng worker: pg_cron, pg_net, secret gọi worker và đăng ký lịch",
+      "goal": "Bật extension và cấp cơ chế gọi worker mà E-08 dựa vào.",
+      "specs": [
+        "ADR-007 R2, R9",
+        "NTF_CRITICAL_RETRY_TECH §4.2, §5 (Tiền đề)",
+        "OUTBOX_DB (Critical gọi ngay)",
+        "ADR-002 R8"
+      ],
+      "dod": [
+        "Bật pg_cron từ phiên bản 1.5 (lịch theo giây) và pg_net trên các môi trường; có ca spike xác nhận lịch 20 giây hoạt động trên gói Supabase đã chọn (kết quả ghi lại, nếu không đạt nêu phương án thay thế cho E-08)",
+        "Secret để pg_cron và pg_net gọi Edge Function worker lưu trong Vault hoặc secret của Edge Function, không trong repo (ADR-007 R9); cơ chế đăng ký lịch (migration hoặc script triển khai) cùng một lịch mẫu kiểm được trong CI; mỗi epic sở hữu job tự đăng ký lịch và hàm thật của mình theo spec feature (danh mục dự kiến: tick worker 20 giây, kiểm chuỗi 17:00 UTC, giám sát 14:30 UTC, kích hoạt phiên bản đầu ngày JST, các job quét hằng ngày của epic khác); mỗi job gọi hàm definer riêng đã thu execute khỏi authenticated",
+        "Kick pg_net sau commit cho sự kiện Critical (best effort) có hàm trợ giúp dùng được từ RPC; mất kick thì tick kế vẫn nhận; danh mục lịch cron kiểm được trong CI (tên, giờ UTC, hàm gọi)"
+      ],
+      "depends": [
+        "E10-INF-02",
+        "E10-OBX-01"
+      ]
+    },
+    {
+      "key": "E10-STO-01",
+      "type": "be",
+      "title": "Storage: bucket riêng tư cho tệp chứng cứ và CSV, zip báo cáo, chính sách và hạn dọn",
+      "goal": "Cấp bucket, policy truy cập và hạn dọn dùng chung cho E-01, E-04, E-05, E-07 (chứng cứ) và E-09 (báo cáo).",
+      "specs": [
+        "api-list §1 (Tệp chứng cứ), SYS_EVIDENCE_UPLOAD_URL",
+        "RPA_DB §4.1 (csv_object_path)",
+        "NFR-SEC-04",
+        "DR-RET-01",
+        "Q31 (chờ E10-CLR-02)"
+      ],
+      "dod": [
+        "Hai bucket riêng tư: chứng cứ (tải lên bằng signed upload URL) và báo cáo (CSV từng báo cáo và zip); không công khai, không URL tĩnh; policy chỉ cho phép đường dẫn có tiền tố auth.uid() ghi vào bucket chứng cứ và cho đọc qua signed URL ngắn hạn do route cấp",
+        "Chính sách vòng đời: E-10 chỉ cấp cơ chế (bucket, policy, cấu hình vòng đời tham số hóa) và chính sách chứng cứ: chuyển lưu trữ lạnh tệp chứng cứ sau 3 năm và quy tắc xóa vật lý cần phê duyệt (DR-RET-01, theo E10-CLR-02); hạn dọn tệp zip tạm và thời hạn signed URL tải xuống của báo cáo do E-09 sở hữu và cấu hình theo E09-CLR-03, E-10 hoàn tất độc lập",
+        "Bucket có tên theo môi trường, cấu hình lặp lại được (migration hoặc script), không chứa dữ liệu thật ở dev và staging; kiểm tự động rằng truy cập chưa xác thực và đường dẫn của người khác bị từ chối"
+      ],
+      "depends": [
+        "E10-INF-02",
+        "E10-CLR-02"
+      ]
+    },
+    {
+      "key": "E10-PRX-01",
+      "type": "be",
+      "special": "MFA",
+      "title": "proxy.ts: làm mới phiên, chặn theo route-access-map, mã lỗi tầng 1",
+      "goal": "Tầng 1 của chặn hai tầng: phiên, tài khoản, vai trò theo tiền tố route.",
+      "specs": [
+        "ARCH-01 C2",
+        "ARCH-05 §3",
+        "error-codes §1.4 (Proxy)",
+        "ADR-002 R5",
+        "ADR-010 R4"
+      ],
+      "dod": [
+        "proxy làm mới phiên Supabase mỗi request, khớp route theo tiền tố dài nhất trong route-access-map, route chưa khai báo thì chặn mặc định (trang về trang chủ kèm M_COM_006, API trả 403 FORBIDDEN)",
+        "Mã lỗi do proxy quyết định: UNAUTHENTICATED (chưa phiên), ACCOUNT_DISABLED (tài khoản không active), FORBIDDEN (sai role), SERVICE_UNAVAILABLE (503 khi lỗi đọc profile hoặc DB: chặn nhưng không đăng xuất); trang thì redirect, API thì body {code, requestId}; điều kiện SESSION_EXPIRED (30 phút) và MFA_REQUIRED (aal2) cắm vào đây theo E01-BE-04 và E01-BE-06",
+        "Proxy không phải lớp bảo vệ duy nhất: handler (requireRole*) và RPC tự kiểm lại; không bao giờ tin role từ client; ghi log proxy.blocked mức WARN kèm requestId, role, route, không ghi token"
+      ],
+      "depends": [
+        "E10-PRX-02",
+        "E10-DB-01",
+        "E10-LOG-01"
+      ]
+    },
+    {
+      "key": "E10-PRX-02",
+      "type": "be",
+      "special": "MFA",
+      "title": "route-access-map: nguồn duy nhất cho proxy, requireRole, menu và thẻ trang chủ, kèm kiểm độ phủ",
+      "goal": "Một tệp bảng tiền tố và role cho 42 màn và 85 API HTTP, có kiểm tự động độ phủ so với api-list.",
+      "specs": [
+        "ARCH-05 §2.1 (thay đổi route-access-map so với prototype), §3",
+        "api-list §2, §4 (phủ màn)",
+        "api-design/_index §2.1 (Phân quyền)",
+        "ADR-002 R5"
+      ],
+      "dod": [
+        "route-access-map khai báo mọi tiền tố trang và API với tập role (tiền tố dài nhất thắng, route con có tập role hẹp hơn route cha phải khai riêng, ví dụ /api/deliveries/[id], /api/incentives/rate-history, /auction/history), gồm các thay đổi G6 và G7 của ARCH-05 §2.1 (ROLE-005 chỉ đọc nhiều màn, ROLE-007 chỉ khối SFTP ở S-040, ROLE-006 vào S-029, S-030, S-042)",
+        "Một tệp duy nhất làm nguồn cho proxy, requireRoleForPage, requireRoleForApi, menu theo role và thẻ trang chủ theo role (D11); thêm màn mới là thêm dòng vào bảng, route chưa khai báo bị chặn",
+        "Kiểm tự động độ phủ: mọi API_ID có URL trong api-list và mọi route trang của 42 SCREEN_ID có dòng trong map và tập role khớp cột Role của api-list và Page Access Control của SPEC; thiếu hoặc lệch thì CI thất bại; kiểm các route chỉ đọc (role có GET mà không có POST tương ứng)",
+        "Quyền ghi tầng 1: không có role nào ngoài danh sách được POST; GET mở thêm cho role chỉ đọc không kéo theo POST; mọi route /api/** ngoại trừ nhóm /api/auth/** và SYS_ME yêu cầu aal2 với ROLE-005, 006, 007 (ADR-010 R4, điều kiện do E01-BE-06 cung cấp)"
+      ],
+      "depends": [
+        "E10-INF-01"
+      ]
+    },
+    {
+      "key": "E10-API-01",
+      "type": "be",
+      "special": "MFA",
+      "title": "Hạ tầng route handler: requireRole, parseJsonRequest, Idempotency-Key và kiểm path param",
+      "goal": "Các hàm dùng chung mà mọi route handler gọi trước khi gọi RPC.",
+      "specs": [
+        "ADR-002 R5",
+        "api-design/_index §2.1, §3",
+        "api-list §1 (Định dạng, Idempotency)",
+        "error-codes §1.2, §1.4 (Route handler)"
+      ],
+      "dod": [
+        "requireRoleForApi và requireRoleForPage tự kiểm lại role từ profiles (không tin proxy), dùng chung route-access-map; trang sai role thì về trang chủ kèm M_COM_006, API sai role thì 403 FORBIDDEN",
+        "parseJsonRequest: POST không phải application/json thì 415 UNSUPPORTED_MEDIA_TYPE, body không phải đối tượng JSON thì 400 BAD_REQUEST (chống CSRF kết hợp cookie SameSite=Lax); route nhận header Idempotency-Key chỉ khi API khai báo, header sai định dạng UUID thì 400 BAD_REQUEST trước khi gọi RPC",
+        "Path param id số khớp ^\\d{1,12}$, sai dạng thì 404 (không lộ có tồn tại); id tài khoản dạng UUID; mọi route ghi đúng khuôn: requireRole, kiểm định dạng (VALIDATION với fields), gọi một RPC, rpcToResponse; không route nào ghi bảng trực tiếp (ngoại lệ duy nhất là Auth Admin ở E-01, ADR-002 R7)",
+        "Mỗi request có requestId sinh ở đây nếu chưa có từ proxy và đi vào log (E10-LOG-01) và body lỗi"
+      ],
+      "depends": [
+        "E10-INF-01",
+        "E10-LOG-01",
+        "E10-PRX-02"
+      ]
+    },
+    {
+      "key": "E10-API-02",
+      "type": "be",
+      "title": "rpcToResponse: đổi kết quả RPC và lỗi trigger sang HTTP và body lỗi chuẩn",
+      "goal": "Một hàm đổi lỗi dùng chung cho toàn bộ route ghi, theo bảng mã lỗi.",
+      "specs": [
+        "ADR-002 R4, R5 (Ánh xạ lỗi)",
+        "error-codes §1.2, §1.3, §2",
+        "api-design/_index §2.2, §3",
+        "RPA_AUDIT_HASH_CHAIN_TECH §4.1 (lỗi 500)"
+      ],
+      "dod": [
+        "rpcToResponse nhận {ok, code, params?, fields?, message?}: thành công thì 201 (tạo mới) hoặc 200 (hành động) với body {ok:true, ...kết quả}; thất bại thì HTTP theo STATUS_BY_CODE nạp từ cột HTTP của error-codes §2 và §1.3 (400, 401, 403, 404, 409, 415, 422, 429, 500, 503), body {code, params?, fields?, requestId}; không trả message của server ra client",
+        "Lỗi trigger: PostgREST trả code P0001 thì lấy hint làm code và parse details (JSON {\"params\":[...]}) làm params (ví dụ DAY_LOCKED với [business_date, status]); hint hợp lệ nhưng details không parse được thì vẫn trả code với params rỗng và log ERROR (theo quyết định ở E10-DOC-01); hint không thuộc error-codes §2 thì log ERROR và trả 500 INTERNAL_ERROR; lỗi PostgREST khác hoặc exception không có mã hợp lệ thì 500; mất kết nối cơ sở dữ liệu hoặc Auth thì 503 SERVICE_UNAVAILABLE; không bao giờ trả chi tiết SQL, tên constraint hay mã Postgres",
+        "Tự từ chối khi chốt giao dịch (hết hiệu lực, vượt 参加上限) là 200 {ok:true, status:'rejected', reject_code}, không phải lỗi; kết quả replayed (Idempotency-Key trùng, cùng payload) là 200 kèm cờ replayed; mã lạ không có trong bảng thì coi là INTERNAL_ERROR; bản ghi tồn tại nhưng RLS không cho thấy thì 404 (không lộ tồn tại)",
+        "Có bảng ánh xạ kiểm tự động: mọi error code của error-codes §2 có HTTP đúng bảng §1.3; mọi hint raise_guard hợp lệ ánh xạ được"
+      ],
+      "depends": [
+        "E10-API-01",
+        "E10-DB-02"
+      ]
+    },
+    {
+      "key": "E10-API-03",
+      "type": "be",
+      "title": "Hạ tầng phân trang keyset và đếm theo yêu cầu",
+      "goal": "Hàm dùng chung mã hóa và giải mã cursor, kiểm limit, dựng truy vấn theo cặp khóa.",
+      "specs": [
+        "api-design/_index §2.3",
+        "api-list §1 (Phân trang, Đếm)",
+        "ARCH-01 §3",
+        "ADR-002 R9"
+      ],
+      "dod": [
+        "limit mặc định 20, tối đa 100, ngoài khoảng thì VALIDATION; cursor là chuỗi mờ base64url chứa cặp (khóa sắp xếp, id) của dòng cuối, client không tự dựng; cursor sai hoặc không giải mã được thì VALIDATION; next_cursor null khi hết dữ liệu; response {items, next_cursor, limit}",
+        "Hàm dựng điều kiện keyset theo cặp (khóa sắp, id) hai chiều giảm hoặc tăng, ổn định khi nhiều dòng trùng khóa sắp xếp (tuple so sánh toàn phần); mỗi API khai một thứ tự cố định có chỉ mục; không đếm tổng mặc định",
+        "Đếm theo yêu cầu: withCount=true thêm total theo bộ lọc hiện tại; counts luôn trả theo giá trị tab (bỏ qua chính tham số tab); summary đếm toàn bảng không theo bộ lọc; đếm chạy trên cột có chỉ mục trạng thái"
+      ],
+      "depends": [
+        "E10-API-01"
+      ]
+    },
+    {
+      "key": "E10-SYS-01",
+      "type": "be",
+      "title": "SYS_ME: hồ sơ người đang đăng nhập, aal, ngày nghiệp vụ hiện tại và mục điều hướng",
+      "goal": "API dùng chung của header, menu và trang chủ theo role.",
+      "specs": [
+        "api-list §2.1 SYS_ME",
+        "DQ-3",
+        "FR-PAU-001, FR-PAU-006",
+        "ARCH-05 §3"
+      ],
+      "dod": [
+        "GET /api/me cho mọi role đã đăng nhập (không yêu cầu aal2 như nhóm /api/auth/**, ADR-010 R4): trả profiles của chính mình (id, full_name, role, status), aal hiện tại của phiên, current_business_day (chỉ đọc trạng thái: business_date và status, luôn là ngày nghiệp vụ hiện tại, không theo ngày đang chọn ở màn; đọc không ghi: gọi current_business_day_readonly() của E10-DB-04 vì current_business_day() gốc là get-or-create nên không được gọi trong GET; ngày chưa có dòng trả open ảo là giả định cần chấp nhận ở E10-DOC-01), mục điều hướng và thẻ trang chủ sinh từ route-access-map theo role",
+        "Tài khoản không active hoặc chưa có phiên thì lỗi chuẩn (ACCOUNT_DISABLED, UNAUTHENTICATED); chưa aal2 với role bắt buộc vẫn gọi được để FE dẫn tới bước TOTP; không trả email, mã nhân viên hay dữ liệu cá nhân thừa; chỉ đọc, không ghi audit",
+        "Thời gian phản hồi p95 không quá 2 giây (NFR-PERF-01), đo ở E10-QA-03; mọi màn dùng chung gọi API này cho header A-2, A-3, A-4, A-6 và menu B-1"
+      ],
+      "depends": [
+        "E10-DOC-01",
+        "E10-DB-04",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02"
+      ]
+    },
+    {
+      "key": "E10-SYS-02",
+      "type": "be",
+      "special": "MFA",
+      "title": "SYS_EVIDENCE_UPLOAD_URL: cấp signed upload URL cho tệp chứng cứ",
+      "goal": "Kiểm loại và cỡ khai báo rồi cấp URL tải lên thẳng Storage, path gắn người tải.",
+      "specs": [
+        "api-list §2.1 SYS_EVIDENCE_UPLOAD_URL, §1 (Tệp chứng cứ)",
+        "FR-ADJ-001, FR-PAU-007, FR-CLS-003, FR-DLV-003",
+        "Q31 (chờ E10-CLR-02)"
+      ],
+      "dod": [
+        "POST /api/evidence/upload-url cho ROLE-003, 004, 005 (role khác thì 403): body fileName, contentType, size; loại chỉ jpg, png, pdf và cỡ không quá 10 MB (giả định LAB-1 chờ Q31, theo E10-CLR-02), sai thì VALIDATION; mỗi tệp một lần gọi; trả path và signed_url (kèm token nếu Storage cần)",
+        "path sinh có tiền tố theo auth.uid() cùng định danh duy nhất để RPC của các epic kiểm quyền sở hữu và tồn tại tệp trước khi nhận evidence_paths (ADJ_REQUEST_CREATE, PAU_PARTICIPANT_RELEASE_CONDITIONAL, DLV_EXCEPTION_RECORD, CLS_DISPUTE_CREATE); fileName được làm sạch, không cho ký tự điều khiển hay đường dẫn tương đối",
+        "Số tệp tối đa mỗi hồ sơ (5) do RPC ghi kiểm lại ở số phần tử evidence_paths; URL hết hạn theo cấu hình E10-CLR-02; không ghi path hay URL vào log; chỉ cấp URL, không ghi dữ liệu nghiệp vụ"
+      ],
+      "depends": [
+        "E10-DOC-01",
+        "E10-STO-01",
+        "E10-API-01",
+        "E10-API-02",
+        "E10-CLR-02"
+      ]
+    },
+    {
+      "key": "E10-FE-01",
+      "type": "fe",
+      "title": "Khung giao diện chung: header, menu theo role, đăng xuất, đổi ngôn ngữ JA và VI",
+      "goal": "Layout dùng chung cho mọi màn đã đăng nhập: header A-1..A-7 và điều hướng B-1.",
+      "specs": [
+        "SPEC các màn (khối A Header, B Điều hướng)",
+        "api-list §4 (thành phần chung SYS_ME, PAU_LOGOUT)",
+        "ARCH-01 C1",
+        "error-codes §1.5"
+      ],
+      "dod": [
+        "Header gồm logo (về trang chủ theo role), badge ngày nghiệp vụ hiện tại (SYS_ME, không đổi theo ô chọn của màn), badge role (ví dụ 'ROLE-005 · Đối soát'), badge MFA, nút đổi ngôn ngữ JA và VI, tên tài khoản và nút đăng xuất; điều hướng sinh từ SYS_ME theo route-access-map, mục đang chọn được tô",
+        "Đổi ngôn ngữ giữ nguyên bước và nội dung đang nhập (trừ trường nhạy cảm theo từng màn); đăng xuất gọi PAU_LOGOUT; khi hàng đợi offline còn bản ghi thì hỏi xác nhận M_COM_030 trước (logic do E-02, khung chỉ nhận hook); phiên hết hạn thì chuyển về đăng nhập kèm M_COM_005 hoặc M_COM_004",
+        "Layout dùng được trên tablet hiện trường và máy văn phòng, thao tác chính dùng bàn phím (NFR-USE-01); component khung có trạng thái tải (skeleton), trạng thái lỗi toàn trang theo kiểu hiển thị chuẩn; không có hộp thông báo trong header (hộp thư nằm ở trang chủ, E-01)"
+      ],
+      "depends": [
+        "E10-SYS-01",
+        "E10-PRX-02",
+        "E10-FE-02"
+      ]
+    },
+    {
+      "key": "E10-FE-02",
+      "type": "fe",
+      "title": "Lớp gọi API phía client và bộ message: ánh xạ mã lỗi sang message và kiểu hiển thị",
+      "goal": "Hàm gọi API dùng chung, bộ message M_ và bộ component hiển thị lỗi theo error-codes §1.5.",
+      "specs": [
+        "error-codes §1.1, §1.4 (FE), §1.5, §3 (message)",
+        "api-design/_index §2.2",
+        "SPEC các màn (Error Handling)"
+      ],
+      "dod": [
+        "Hàm gọi API dùng chung: gửi cookie phiên, header Content-Type và Idempotency-Key khi API khai; đọc body lỗi {code, params, fields, requestId}; mất mạng hoặc timeout thì NETWORK_OFFLINE (M_COM_003); MFA_REQUIRED thì chuyển bước TOTP kèm M_COM_019 và quay lại URL cũ; SESSION_EXPIRED và UNAUTHENTICATED thì chuyển đăng nhập; FORBIDDEN thì M_COM_006 rồi về trang chủ; 503 thì M_COM_002; 500 hoặc mã lạ thì dialog M_COM_001 kèm requestId",
+        "Bộ message M_{PFX}_{nnn} (khoảng 166 message theo error-codes) nạp từ một nguồn duy nhất tiếng Việt, thay tham số {0}, {1} theo thứ tự params; ngày trong params chuyển ISO sang DD/MM/YYYY (giờ DD/MM/YYYY HH:mm JST) khi hiển thị; không bao giờ hiển thị message thô của server; chuỗi tiếng Nhật chưa có (chờ E10-CLR-05), cơ chế ngôn ngữ phải chạy được khi thiếu chuỗi JA bằng cách rơi về tiếng Việt",
+        "Component kiểu hiển thị chuẩn: inline (lỗi gắn trường theo fields), banner (trạng thái, khóa form, kết quả cần đọc kỹ, không tự tắt), dialog (xác nhận hoặc lỗi chặn kèm hướng dẫn), toast (chỉ cho thao tác thành công), redirect; mã nghiệp vụ DAY_LOCKED luôn đi qua component S-024 ADJ_LOCKED_DAY_BLOCK của E-04, không toast riêng; kiểm client dùng cùng message code với server",
+        "Kiểm thử đơn vị: mọi error code của error-codes §2 có kiểu xử lý; mọi M_ được tham chiếu trong DoD các màn có trong bộ message (quét tự động); thiếu message thì build thất bại",
+        "Màn đăng ký bộ xử lý lỗi theo ngữ cảnh chạy trước phần xử lý chung: ví dụ ROLE-007 ở S-040 gọi nhầm API báo cáo nhận 403 thì hiện M_COM_006, ẩn khối tải CSV và vẫn xem được khối SFTP (không chuyển về trang chủ); khi màn không đăng ký thì mặc định vẫn là M_COM_006 rồi về trang chủ"
+      ],
+      "depends": [
+        "E10-API-02",
+        "E10-CLR-05"
+      ]
+    },
+    {
+      "key": "E10-QA-01",
+      "type": "qa",
+      "special": "MFA",
+      "title": "QA nền DB: quét catalog quyền, RLS, hàm definer và migration trên cơ sở trống",
+      "goal": "Kiểm tự động toàn schema: không bảng nào có ghi cho người dùng, không hàm job nào gọi được từ anon.",
+      "specs": [
+        "ADR-002 R1, R2, R8",
+        "database-design/_index §5.2 (quyền)",
+        "ARCH-05 §3",
+        "ADR-008 R1"
+      ],
+      "dod": [
+        "Quét catalog trong CI: mọi bảng public có RLS bật và chỉ policy SELECT; không policy INSERT, UPDATE, DELETE nào cho authenticated hay anon; anon và authenticated không có quyền ghi bảng, không có execute trên hàm job và worker; mọi hàm security definer có search_path rỗng; hàm job và worker thu execute khỏi PUBLIC; danh sách ngoại lệ được khai tường minh, thêm ngoại lệ phải qua review",
+        "Với từng role (ROLE-001 đến 007, anon, authenticated không role): gọi trực tiếp PostgREST ghi vào bảng bất kỳ bị từ chối; gọi trực tiếp write_audit, worker_*, job_* bị từ chối; INSERT, UPDATE, DELETE, TRUNCATE trên audit_logs bị chặn kể cả service_role; get_my_role trả null cho tài khoản không active",
+        "Migration áp được trên cơ sở trống theo đúng thứ tự và trên cơ sở có dữ liệu seed; áp hai lần không lỗi (idempotent ở phần seed); mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả",
+        "Quyền hiệu lực (trước hết xác nhận hàm tồn tại đúng signature, sau đó has_function_privilege và thử gọi thật; hàm không tồn tại không được tính là bị từ chối): outbox_emit, ops_alert_record, hàm kick pg_net, check_access trực tiếp và mọi hàm nội bộ khác bằng anon và authenticated đều bị từ chối, còn RPC nghiệp vụ (definer) vẫn gọi được các helper đó; tạo một hàm probe mới bằng đúng role chạy migration, không tự revoke trên probe, thì anon và authenticated không có execute (has_function_privilege) và gọi bị từ chối; dọn probe sau khi kiểm"
+      ],
+      "depends": [
+        "E10-DB-01",
+        "E10-DB-02",
+        "E10-DB-03",
+        "E10-DB-05",
+        "E10-AUD-01",
+        "E10-OBX-01",
+        "E10-OBX-03",
+        "E10-AUD-02",
+        "E10-OBX-02"
+      ]
+    },
+    {
+      "key": "E10-QA-02",
+      "type": "qa",
+      "special": "khóa ngày hai lớp (F-018)",
+      "title": "QA ngày nghiệp vụ và phiên bản: chuyển trạng thái, đồng thời, khóa ngày và phiên bản hiệu lực",
+      "goal": "Kiểm thử trigger và hàm của ngày và phiên bản trên PostgreSQL.",
+      "specs": [
+        "CORE_DB (Trigger và hàm, Thứ tự khóa chuẩn)",
+        "ADR-005 R4, R5",
+        "ADR-003 R4, R5, R7",
+        "ADR-002 R4"
+      ],
+      "dod": [
+        "Chuyển trạng thái ngày: năm chuyển hợp lệ chạy được (open sang locked, locked sang reopen_requested, reopen_requested sang locked, reopen_requested sang reopened, reopened sang locked), ma trận 16 cặp trạng thái trong đó cập nhật cùng trạng thái được phân biệt với chuyển bị cấm; mọi chuyển khác (ví dụ open sang reopened, locked sang open, đổi business_date, xóa ngày đã khóa) bị raise đúng hint; hai yêu cầu mở lại cùng ngày hoặc cùng lần khóa bị chặn bởi chỉ mục duy nhất; decided_by trùng requested_by bị chặn bởi CHECK",
+        "current_business_day() với 60 phiên đồng thời đầu ngày tạo đúng một dòng; lock_day_open true với open và reopened, false với locked và reopen_requested; guard_locked_business_day gắn vào bảng giả dựng trong harness của E-10 (cùng cột business_day_id) chặn insert khi ngày khóa (kiểm với bảng thật delivery_parts, delivery_exceptions, trade_adjustment_entries, disputes thuộc QA của epic sở hữu), trả hint DAY_LOCKED với params [business_date, status] ISO và rollback giao dịch",
+        "rule_versions: sửa params hoặc tỷ lệ sau khi tạo bị chặn; hai bản scheduled cùng loại cùng ngày hiệu lực và hai bản active cùng loại bị chặn; người duyệt hoặc từ chối trùng người lập bị chặn; rejected thiếu người hoặc thời điểm, chưa rejected nhưng có người từ chối, cặp người và thời điểm từ chối lệch null đều bị DB từ chối độc lập với RPC; active_rule_version() đúng theo ngày khi job kích hoạt chưa chạy; thiếu khóa params thì RPC dùng khóa từ chối an toàn kèm cảnh báo rule_param_missing",
+        "Mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả (ca đua giữa các RPC ngày và giao dịch thuộc E05-QA-03)"
+      ],
+      "depends": [
+        "E10-DB-03",
+        "E10-DB-04",
+        "E10-DB-05",
+        "E10-OBX-03"
+      ]
+    },
+    {
+      "key": "E10-QA-03",
+      "type": "qa",
+      "special": "MFA",
+      "title": "QA tầng route: proxy, requireRole, mã lỗi, phân trang, SYS_ME và SYS_EVIDENCE_UPLOAD_URL",
+      "goal": "Kiểm thử đầu cuối hạ tầng route với phiên thật của từng role.",
+      "specs": [
+        "ARCH-05 §3",
+        "error-codes §1.3, §1.4",
+        "api-design/_index §2, §3",
+        "ADR-010 R4"
+      ],
+      "dod": [
+        "Ma trận ghi rõ method, route, trạng thái phiên (công khai, đã đăng nhập, aal2), role, aal và fixture đầu vào; mỗi endpoint một chế độ: đăng nhập (anon, công khai) không đòi phiên; SYS_ME cần phiên của tài khoản active nhưng chấp nhận aal1 (chưa đăng nhập vẫn 401 UNAUTHENTICATED); MFA enroll và verify cần phiên theo luồng E-01 nhưng chưa đòi aal2; chỉ route yêu cầu aal2 áp MFA_REQUIRED trước FORBIDDEN; ghi rõ ca nào kiểm hệ thống sau E01-BE-06 và ca nào dùng fixture nền; route của epic khác chưa triển khai dùng harness của nền (route giả cùng tiền tố), đầu cuối đầy đủ thuộc QA của feature. Ma trận role × route: với mỗi tiền tố trong route-access-map, từng role trong tập được phép nhận 200 hoặc 201, từng role ngoài tập nhận 403 (API) hoặc trang chủ kèm M_COM_006 (trang); chưa đăng nhập nhận 401 UNAUTHENTICATED; tài khoản disabled nhận ACCOUNT_DISABLED; route chưa khai báo bị chặn mặc định; ROLE-005, 006, 007 phiên aal1 nhận MFA_REQUIRED trước FORBIDDEN",
+        "Lỗi: POST không phải JSON nhận 415, body không phải đối tượng nhận 400, Idempotency-Key sai UUID nhận 400, path id sai dạng nhận 404; lỗi trigger P0001 với hint hợp lệ đổi đúng HTTP và params, hint hợp lệ và details hợp lệ đổi đúng code và params, hint hợp lệ nhưng details hỏng trả code với params rỗng, hint lạ nhận 500; lỗi cơ sở dữ liệu giả lập nhận 503; không có body nào chứa SQL, tên constraint hay message của server; requestId có mặt trong mọi body lỗi và trong log",
+        "Phân trang: limit ngoài 1 đến 100, cursor sai nhận VALIDATION; dữ liệu có nhiều dòng trùng khóa sắp xếp qua ranh giới trang không lặp và không thiếu; hai chiều giảm tăng; SYS_ME trả đúng cho từng role (mục điều hướng khớp map, không lộ dữ liệu thừa) và chạy được khi chưa aal2; p95 không quá 2 giây",
+        "SYS_EVIDENCE_UPLOAD_URL: loại ngoài jpg, png, pdf và cỡ trên 10 MB nhận VALIDATION; role ngoài 003, 004, 005 nhận 403; path mang tiền tố của người gọi, người A không xin được URL cho path của người B và không sửa path hoặc token để ghi sang đối tượng khác; token hợp lệ, sai và hết hạn cho kết quả đúng; yêu cầu cấp URL trái quyền khác với việc dùng một signed URL hợp lệ đã cấp (URL tải lên là quyền mang theo token, không tự gắn phiên người tạo); fileName có ký tự điều khiển bị làm sạch; log không chứa token, path hay URL; mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả",
+        "Ghi đè lỗi theo màn: ROLE-007 đang ở S-040 nhận 403 từ /api/reports/** thì giữ màn và ẩn khối E; ROLE-005 cùng lỗi thì về trang chủ; màn không đăng ký xử lý riêng dùng mặc định",
+        "Route mẫu GET và POST của skeleton E10-INF-01 chạy hết chuỗi proxy, requireRole, RPC và rpcToResponse bằng thành phần thật (thay stub) và cho đúng kết quả",
+        "SYS_ME ngày hôm nay: chưa có dòng business_days thì trả open và không tạo dòng; ngày locked, reopen_requested, reopened trả đúng trạng thái cho từng role và aal (ROLE-005, 006, 007 aal1 vẫn gọi được; ROLE-001, 002, 004, 006, 007 không đọc được bảng business_days nhưng vẫn thấy trạng thái qua hàm đọc hẹp; ROLE-003 đọc được bảng; ROLE-005 đọc bảng tùy aal sau patch E01-BE-06)",
+        "p95 của SYS_ME đo trên dữ liệu và tải đại diện, ghi workload, số mẫu và cách tính phân vị như các QA feature (không đại diện cho mọi tìm kiếm của NFR-PERF-01)"
+      ],
+      "depends": [
+        "E10-PRX-01",
+        "E10-API-02",
+        "E10-API-03",
+        "E10-SYS-01",
+        "E10-SYS-02",
+        "E10-FE-02"
+      ]
+    },
+    {
+      "key": "E10-QA-04",
+      "type": "qa",
+      "special": "outbox + worker (ADR-007)",
+      "title": "QA outbox và audit trong giao dịch: rollback, chống trùng, mặc định theo loại, cảnh báo",
+      "goal": "Kiểm thử đầu cuối đường ghi nghiệp vụ, audit và outbox trong cùng giao dịch.",
+      "specs": [
+        "ADR-007 R1, R5a, R7",
+        "OUTBOX_DB §4.1.1",
+        "RPA_AUDIT_HASH_CHAIN_TECH §4.1",
+        "ADR-002 R3"
+      ],
+      "dod": [
+        "RPC mẫu ghi dữ liệu, write_audit và outbox_emit trong một giao dịch: rollback thì không còn dòng dữ liệu, audit hay sự kiện; commit thì có đủ cả ba; lỗi sau write_audit khiến toàn bộ rollback và chain_seq không có lỗ hổng",
+        "outbox_emit: mỗi trong 15 loại sự kiện có đúng is_critical, max_attempts và khuôn dedup_key theo OUTBOX_DB §4.1.1 (Critical 4, nội bộ 3, report_rpt06_ready 4, thông báo thường và trong ứng dụng 1); phát hai lần cùng dedup_key chỉ có một dòng; dedup_key sai khuôn bị lỗi; payload chứa khóa bí mật bị từ chối",
+        "ops_alert_record: chống trùng theo khóa chưa xác nhận hoạt động (cùng loại cùng khóa chỉ một dòng chưa xác nhận, sau xác nhận ghi được dòng mới); ROLE-007 đọc được, role khác không; pg_cron và pg_net bật, lịch cron khai báo khớp danh mục (E10-OBX-04); mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả",
+        "Kick: giao dịch rollback không phát yêu cầu HTTP; commit sự kiện Critical kích hoạt kick đúng một lần; kick lỗi hoặc mất thì dòng vẫn pending và tick kế xử lý được"
+      ],
+      "depends": [
+        "E10-OBX-02",
+        "E10-OBX-03",
+        "E10-OBX-04",
+        "E10-AUD-02"
+      ]
+    },
+    {
+      "key": "E10-QA-05",
+      "type": "qa",
+      "title": "QA hạ tầng: diễn tập khôi phục, môi trường, bí mật và cảnh báo vận hành",
+      "goal": "Kiểm chứng sao lưu, tách môi trường, quét bí mật và cảnh báo trên staging.",
+      "specs": [
+        "NFR-AVL-03",
+        "NFR-SEC-04",
+        "NFR-OPS-01",
+        "ADR-001 R6",
+        "ADR-008 §4"
+      ],
+      "dod": [
+        "Diễn tập khôi phục trên staging từ bản sao lưu: đạt RPO không quá 15 phút và RTO không quá 4 giờ, ghi biên bản (thời điểm, dữ liệu mất, thời gian khôi phục); sau khôi phục checker chuỗi băm của E-10 cho ok và row_hash khớp mốc fixture (job và email mốc thật kiểm ở E09-QA-04)",
+        "Tách môi trường: dev và staging không chứa dữ liệu thật; production không có script xóa hoặc reset; quét bí mật trên repo và gói client không thấy khóa; TLS 100 phần trăm kết nối; secret chỉ ở nơi đã khai",
+        "Diễn tập cảnh báo: mô phỏng từng loại trong 4 loại của NFR-OPS-01 và xác nhận cảnh báo đến đúng nơi theo E10-CLR-03; đo khả dụng: nhật ký uptime độc lập có số liệu 02:00 đến 10:00 JST; mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả"
+      ],
+      "depends": [
+        "E10-INF-03",
+        "E10-INF-04",
+        "E10-AUD-03"
+      ]
+    },
+    {
+      "key": "E10-CLR-01",
+      "type": "clarify",
+      "title": "Làm rõ: vùng lưu dữ liệu, gói Supabase và Vercel, môi trường và xoay vòng bí mật (Q8, APPI)",
+      "goal": "Q8 còn mở phần vùng lưu dữ liệu và trách nhiệm xử lý APPI; ADR-001 đã định hướng tách dev, staging, production nên chỉ cần chốt cấu hình, gói và chu kỳ xoay vòng bí mật.",
+      "specs": [
+        "REQ-001 §8 Q8 (open)",
+        "ARCH-01 §4, §6",
+        "ADR-001 §4 (Rủi ro)",
+        "NFR-PRIV-01"
+      ],
+      "dod": [
+        "Có quyết định chấp nhận: vùng của Supabase và Vercel (đề xuất Tokyo), văn bản xử lý dữ liệu của nhà cung cấp phục vụ APPI, gói dịch vụ đủ sao lưu point-in-time RPO 15 phút và staging tách biệt, số môi trường cuối, chu kỳ xoay vòng bí mật; ghi vào PREMISE; không ghi khóa hay địa chỉ thật vào repo",
+        "Báo lại E10-INF-02, E10-INF-03; chỉ khi vùng hoặc gói được chọn không đáp ứng ràng buộc kiến trúc, vùng hoặc APPI thì mở lại ADR-001 (và khi đó đánh giá viết lại tầng ghi), báo trước cho mọi epic; đổi gói thương mại thông thường không tự kéo theo viết lại"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E10-CLR-02",
+      "type": "clarify",
+      "title": "Làm rõ: nơi lưu, thời hạn và loại tệp chứng cứ, lưu trữ lạnh sau 3 năm (Q31)",
+      "goal": "Q31 còn mở: bucket chứng cứ, thời hạn lưu, chuyển lạnh; giới hạn 5 tệp, 10 MB, jpg, png, pdf mới là giả định LAB-1.",
+      "specs": [
+        "REQ-001 §8 Q31 (open)",
+        "api-list QA-5, §1 (Tệp chứng cứ)",
+        "DR-RET-01",
+        "RPA_DB §4.1"
+      ],
+      "dod": [
+        "Có quyết định chấp nhận: nơi lưu và tên bucket theo môi trường, thời hạn signed URL tải lên trong giới hạn của dịch vụ được chọn và tải xuống chứng cứ (thời hạn tải xuống báo cáo do E09-CLR-03 quyết, E-10 không chờ), giới hạn số tệp, cỡ và loại, thời hạn lưu online và chuyển lưu trữ lạnh sau 3 năm, quy tắc xóa vật lý cần phê duyệt; ghi vào PREMISE",
+        "Báo lại E10-DOC-01, E10-STO-01, E10-SYS-02, E10-INF-03 và các epic có tệp chứng cứ (E-01, E-04, E-05, E-07); không tự đặt số khi chưa có quyết định"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E10-CLR-03",
+      "type": "clarify",
+      "title": "Làm rõ: ngưỡng cảnh báo vận hành, người chịu trách nhiệm từng NFR và kênh cảnh báo ngoài ứng dụng (Q5)",
+      "goal": "Q5 còn mở phần NFR-OPS-01: ngưỡng cảnh báo, người chịu trách nhiệm từng NFR, kênh cho cảnh báo sức khỏe hệ thống.",
+      "specs": [
+        "REQ-001 §8 Q5 (open)",
+        "NFR-OPS-01",
+        "NFR-AVL-01",
+        "§5 (chủ sở hữu từng NFR)"
+      ],
+      "dod": [
+        "Có quyết định chấp nhận: ngưỡng và người nhận cho từng loại trong 4 loại cảnh báo vận hành, kênh gửi cho cảnh báo sức khỏe hệ thống (ngoài hàng đợi ops_alerts), danh sách người chịu trách nhiệm từng NFR, cách tính khả dụng và bảo trì đã báo; ghi vào PREMISE",
+        "Báo lại E10-INF-04, E10-QA-05 và E08-CLR-01 (ngưỡng outbox_stale cùng câu Q5); không tự đặt ngưỡng khi chưa có quyết định",
+        "Q5 còn các phần ngoài issue này (thời gian mất kết nối cho offline, trình duyệt và thiết bị) thuộc E02-CLR-01; không đóng cả Q5 khi chỉ chốt cảnh báo; không mở lại Q77 (đã chấp nhận thiếu email mốc làm tín hiệu)"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E10-CLR-04",
+      "type": "clarify",
+      "title": "Làm rõ: bản 業務規程 và tỷ lệ 完納奨励金 đầu tiên khi go-live (seed) và cách duyệt",
+      "goal": "Chưa có giá trị tỷ lệ và tham số thật cho bản đầu tiên; chưa nói bản đầu có phải qua duyệt hai người hay nạp ở bước khởi tạo.",
+      "specs": [
+        "CORE_DB §4.4 (Danh mục params)",
+        "ADR-003 R4, R5",
+        "INC_RULE_VERSIONING_TECH §5",
+        "REQ-001 §8 Q1, Q2, Q12, Q17, Q25"
+      ],
+      "dod": [
+        "Có quyết định chấp nhận: giá trị ban đầu của market_rule (reopen_window_days, conditional_release_conditions, market_holidays, default_participation_limit_jpy) và tỷ lệ incentive_rate đầu tiên; bản đầu được nạp ở bước khởi tạo hay đi qua tạo và duyệt hai người; ngày hiệu lực của bản đầu; ghi vào PREMISE",
+        "Báo lại E10-DB-05, E-06 (E06-CLR-02), E-05 và E-01 (các RPC đọc params); không tự đặt tỷ lệ thật khi chưa có quyết định",
+        "Phối hợp với Q91, E06-CLR-02 và E-11 (bản phiên bản đầu có di trú hay do ROLE-006 nhập và duyệt, hạn mức 4 lần mỗi năm); không seed bản active để vượt quy trình hai người hoặc hạn mức"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E10-CLR-05",
+      "type": "clarify",
+      "title": "Làm rõ: chuỗi tiếng Nhật của bộ message và bản dịch giao diện JA",
+      "goal": "Spec yêu cầu đổi ngôn ngữ JA và VI nhưng chuỗi JA của message chưa có (error-codes Q4).",
+      "specs": [
+        "error-codes (Q4)",
+        "PAU_LOGIN_SPEC A-2",
+        "ARCH-01 §6"
+      ],
+      "dod": [
+        "Có quyết định chấp nhận: ai cung cấp và duyệt chuỗi tiếng Nhật của khoảng 166 message và nhãn giao diện, hạn cung cấp trước go-live, hay giao diện chỉ tiếng Việt ở baseline; ghi vào PREMISE",
+        "Báo lại E10-FE-01, E10-FE-02 và mọi màn; nếu chỉ tiếng Việt thì nút đổi ngôn ngữ ẩn hoặc rơi về tiếng Việt theo quyết định, không để chuỗi rỗng"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E10-DB-06",
+      "type": "db",
+      "special": "業務規程 có phiên bản",
+      "title": "Seed: bản 業務規程 và tỷ lệ 完納奨励金 đầu tiên khi go-live",
+      "goal": "Nạp bản market_rule và incentive_rate đầu tiên theo quyết định đã chấp nhận, tách khỏi schema để thiếu tỷ lệ thật không chặn phát triển.",
+      "specs": [
+        "CORE_DB §4.4 (Danh mục params)",
+        "ADR-003 R4, R5",
+        "E10-CLR-04"
+      ],
+      "dod": [
+        "Seed bản market_rule và incentive_rate đầu tiên ở trạng thái và theo cách duyệt đã chốt ở E10-CLR-04 (không tự đặt giá trị; tỷ lệ 完納奨励金 thật chờ khách; không vượt quy trình hai người hay hạn mức 4 lần mỗi năm)",
+        "Seed chạy được trên staging với giá trị giả rõ ràng (không phải tỷ lệ thật) và trên production khi có giá trị chính thức; chạy lại không tạo bản thứ hai; active_rule_version() trả đúng bản đã seed theo ngày"
+      ],
+      "depends": [
+        "E10-DB-05",
+        "E10-CLR-04"
+      ]
+    }
+  ]
+}

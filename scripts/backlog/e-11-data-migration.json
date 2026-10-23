@@ -1,0 +1,677 @@
+{
+  "epic": {
+    "key": "E-11",
+    "title": "E-11 Di trú dữ liệu ban đầu (FR-RPA-008)",
+    "goal": "Nạp dữ liệu lịch sử của chợ trước go-live bằng loader có staging, từng ngày một giao dịch, giữ mã gốc, có danh sách loại trừ, đối chiếu số bản ghi và tổng tiền, ký số tiền, rollback và cutover có kiểm soát.",
+    "specs": [
+      "FR-RPA-008",
+      "ADR-014",
+      "RPA_MIGRATION_LOAD_TECH",
+      "RPA_DB §4.3..§4.10",
+      "api-list §3 RPA_MIGRATION_*"
+    ],
+    "out_of_scope": [
+      "Số hóa tài liệu giấy và màn import cho người dùng (PREMISE P14, ADR-014 §3)",
+      "Tính 完納奨励金, sinh báo cáo và phát outbox cho ngày lịch sử (Q66)",
+      "Nạp incentive-rate-table.csv và settlement-summary.csv (Q38: chỉ đối chiếu)",
+      "Bảng nghiệp vụ đích và trigger của chúng (E-01, E-02, E-03, E-07); nền tảng ngày, audit, route (E-10); kiểm chuỗi băm (E-09)",
+      "Nạp bổ sung vào ngày lịch sử đã khóa và nhánh miễn trừ khóa ngày cho loader (Q78)"
+    ]
+  },
+  "issues": [
+    {
+      "key": "E11-DOC-01",
+      "type": "doc",
+      "title": "API Design: RPC loader và ba API di trú (RPA_MIGRATION_*)",
+      "goal": "Soạn API Design cho 1 RPC loader và 3 API HTTP, chốt hợp đồng từng bước của loader.",
+      "specs": [
+        "api-list §3 RPA_MIGRATION_LOAD, BATCH_LIST, SIGN_OFF, REJECT_RESOLVE",
+        "RPA_MIGRATION_LOAD_TECH §2..§4",
+        "RPA_DB §4.3..§4.5",
+        "BM-2-901-52",
+        "PREMISE (mục Thêm: API Design)"
+      ],
+      "dod": [
+        "Mỗi API một file {API_ID}_API.md theo mẫu BM-2-901-52: RPA_MIGRATION_LOAD (RPC không có route; chữ ký rpc_migration_load_batch với p_batch_code, p_step, p_payload, p_business_date; các bước stage, validate, load_day, finalize và các bước bổ sung ở E11-BE-01), RPA_MIGRATION_BATCH_LIST (ROLE-005 và ROLE-007), RPA_MIGRATION_SIGN_OFF (ROLE-005), RPA_MIGRATION_REJECT_RESOLVE (ROLE-005, giả định theo Q42 đã chốt); mã lỗi ghi theo {ok:false, code} vì script đọc trực tiếp, không có HTTP",
+        "Chốt khóa response của RPA_MIGRATION_BATCH_LIST (migration_batches gồm rows_total, rows_loaded, rows_rejected, rows_skipped, source_total_amount, loaded_total_amount, signed_off_by, signed_off_at, note; migration_rejected_records kèm reason_code và resolution), keyset (started_at, id) và lọc theo wave, mode, status",
+        "Chốt các điểm spec chưa định nghĩa: bước nạp Wave 1 (participant và căn cứ không gắn ngày nghiệp vụ, E11-BE-01d), bước rollback (rolled_back, không có trong danh sách p_step của TECH, E11-BE-01f), nơi và định dạng biên bản đối chiếu MIG-03, và cách ROLE-005 dùng ba API khi chưa có màn (chờ E11-CLR-06)",
+        "Chốt quan hệ lượt, tệp, Wave và ngày nạp (TECH nói mỗi lượt một tệp nhưng một ngày cần lot, giao dịch, giao hàng trước khi khóa, Q78 cấm nạp bổ sung): mỗi tệp giữ lượt và SHA-256 riêng; bước validate dựng kế hoạch nạp theo ngày trên tập lượt cùng đợt đã stage (lot thuộc ngày sớm nhất có giao dịch tham chiếu, trừ khi nguồn có ngày riêng); load_day nhận tập lượt cùng đợt, nạp mọi thực thể phụ thuộc của ngày trong một giao dịch theo thứ tự khóa ngoại rồi mới khóa; ghi chỗ hở và quyết định vào PREMISE",
+        "Chốt bảng p_step theo trạng thái lượt (stage, validate, load_wave1, load_day, finalize, rollback so với staged, validated, loaded, failed, rolled_back), cách resume cùng batch_code sau mất phản hồi, replay bằng batch_code mới, finalize gọi lần hai (trả kết quả cũ hoặc INVALID_STATE, không audit lần hai, không đổi số đã ký), và ai ghi failed (bước fail của rpc_migration_load_batch do script gọi bằng JWT ROLE-007 khi lỗi không phục hồi, không biến lỗi tạm hay mất phản hồi sau commit thành failed); ghi PREMISE",
+        "Chốt literal after của migration.day_loaded ({batch_code, rows, amount} theo TECH §4.3 bước 5) và phần chiếu raw_record cho ROLE-005 theo entity_type"
+      ],
+      "depends": [
+        "E11-CLR-06"
+      ]
+    },
+    {
+      "key": "E11-DOC-02",
+      "type": "doc",
+      "title": "MIG-01 và MIG-02: inventory nguồn, quy tắc mapping và cleansing",
+      "goal": "Tài liệu inventory theo khuôn migration-inventory và bộ quy tắc mapping, cleansing làm đầu vào cho loader.",
+      "specs": [
+        "ADR-014 §2 (MIG-01, MIG-02)",
+        "RPA_MIGRATION_LOAD_TECH §4.2, §5",
+        "FR-RPA-008 AC1, AC2",
+        "Q9, Q29 (chờ E11-CLR-01, E11-CLR-02)"
+      ],
+      "dod": [
+        "Inventory mỗi nguồn: người chịu trách nhiệm (vai trò, không tên thật), khoảng ngày, khóa định danh nguồn (source_key), tỷ lệ trống và trùng (profiling), Wave; không chứa dữ liệu thật hay cá nhân",
+        "Bộ quy tắc mapping chốt từng trường nguồn sang cột đích của participants, participant_bases, lots, trades, deliveries, delivery_parts và quy tắc cleansing theo sáu mã MIG_REQUIRED_MISSING, MIG_PARTICIPANT_UNMAPPED, MIG_DUPLICATE_KEY, MIG_INVALID_FORMAT, MIG_REF_NOT_FOUND, MIG_CONSTRAINT; tiêu chí gộp lot trùng trong ngày (mặc định giữ dòng đầu, dòng sau MIG_DUPLICATE_KEY), cách ánh xạ trạng thái và căn cứ của participant từ nguồn (không áp quy tắc 許可 và 承認 hiện hành), ánh xạ trạng thái giao dịch lịch sử",
+        "Danh sách quy tắc không có chỗ trống: mỗi mục đã chốt hoặc nối tới một issue làm rõ (E11-CLR-01..05); tài liệu viết bằng mã tham chiếu, không chép đề gốc",
+        "Chốt cho lot xuyên ngày: ngày đưa lot vào kế hoạch, source_key dùng lại khi nhiều giao dịch của nhiều ngày tham chiếu cùng lot, và số dư available_qty sau nạp (ảnh chụp từ nguồn hay tính từ initial_qty trừ giữ chỗ và đã bán của giao dịch lịch sử, tránh trừ hai lần); ánh xạ trạng thái lot, trạng thái giao dịch (pending, confirmed, rejected, cancelled) và thời điểm lịch sử (confirmed_at, completed_at, recorded_at) sang cột đích; ghi nguồn của closed_by, locked_by và timestamp khóa theo hợp đồng migration",
+        "Khuôn mapping và inventory có bản đọc máy (tệp cấu hình trong scripts/migration/) mà validate và script thực sự đọc, không chứa dữ liệu thật; tài liệu chỉ tham chiếu mã hợp đồng của CLR-02"
+      ],
+      "depends": [
+        "E11-CLR-01",
+        "E11-CLR-02",
+        "E11-CLR-03",
+        "E11-CLR-05"
+      ]
+    },
+    {
+      "key": "E11-DOC-03",
+      "type": "doc",
+      "title": "MIG-04: quy trình cutover, tiêu chí no-go, rollback và dọn dẹp sau go-live",
+      "goal": "Runbook một lần cho cutover, không coi cutover là một cú nhấp.",
+      "specs": [
+        "ADR-014 §2 (MIG-03, MIG-04, Cutover)",
+        "RPA_MIGRATION_LOAD_TECH §4.5",
+        "FR-RPA-008 AC3, AC4",
+        "NFR-AVL-03"
+      ],
+      "dod": [
+        "Runbook các bước: (a) tối thiểu một lượt rehearsal mỗi nguồn trên staging với dữ liệu đã che và ROLE-005 ký; (b) đóng băng nguồn tối trước một 休市日 theo mốc E11-CLR-04, xuất tệp cuối và tính SHA-256; (c) chụp bản sao lưu ngay trước lượt production; (d) nạp production W1 rồi W2 (giao hàng theo Wave của E11-CLR-03); (e) đối chiếu và kiểm chuỗi băm audit; (f) go hoặc no-go do người chịu trách nhiệm nghiệp vụ duy nhất phía khách ký; (g) giao dịch ghi giấy trong lúc đóng băng nhập lại qua màn thường",
+        "Tiêu chí no-go: lệch số bản ghi hoặc số tiền chưa giải trình, còn migration_rejected_records ở trạng thái pending không có kế hoạch được duyệt, lượt failed, kiểm chuỗi băm sau nạp khác ok; rollback: lượt chưa ghi bảng đích (Wave 1 chưa commit và chưa nạp ngày nào) thì rolled_back và xóa stg_*, lượt đã ghi Wave 1 hoặc đã nạp ngày thì đi tiếp bằng finalize hoặc khôi phục bản sao lưu (không xóa được ngày đã khóa và audit bất biến); biên bản rollback ghi rõ khi email mốc băm đã gửi sau thời điểm nạp",
+        "Dọn dẹp sau go-live: xóa schema migration_staging (dòng loại trừ đã chép raw_record), thu execute của rpc_migration_load_batch; rà trạng thái participant sau nạp bởi ROLE-005 (ADR-014 §4); ghi vai trò ký từng bước bằng mã vai trò, không tên thật",
+        "Chốt bằng chứng rehearsal liên môi trường: tệp rehearsal là bản đã che, tệp production cuối xuất sau đóng băng có thể khác byte và khác SHA-256; quyết định cách liên kết (tệp gốc, bản đã che, tệp cuối), khi tệp cuối khác thì có phải chạy lại rehearsal hay chỉ cần giải trình có chữ ký, và production kiểm bằng chứng nào; ghi chỗ hở của TECH §4.1 bước 3 và §4.5 #3 vào PREMISE; ký go hoặc no-go của người phụ trách nghiệp vụ phía khách khác với chữ ký số tiền của ROLE-005, không gộp"
+      ],
+      "depends": [
+        "E11-CLR-04"
+      ]
+    },
+    {
+      "key": "E11-DB-01",
+      "type": "db",
+      "special": "di trú dữ liệu ban đầu (ADR-014)",
+      "title": "Migration migration_batches: lượt nạp, đối chiếu số bản ghi và tổng tiền",
+      "goal": "Bảng lượt nạp theo Wave, mode và chữ ký ROLE-005.",
+      "specs": [
+        "RPA_DB §4.3, §5",
+        "FR-RPA-008 AC3, AC5",
+        "ADR-014 §2",
+        "Q38 (đã chốt)"
+      ],
+      "dod": [
+        "Cột theo RPA_DB §4.3: id, batch_code (duy nhất), wave (CHECK từ 1 đến 3), source_name, source_file_sha256 (CHECK độ dài 64 hex), mode (CHECK rehearsal, production), status (CHECK staged, validated, loaded, failed, rolled_back; mặc định staged), rows_total, rows_loaded, rows_rejected, rows_skipped (mặc định 0, CHECK không âm), source_total_amount và loaded_total_amount NUMERIC(18,3), run_by (khóa ngoại profiles), started_at, finished_at, signed_off_by (khóa ngoại profiles), signed_off_at, note",
+        "Bất biến (đơn vị là dòng nguồn, không phải số link; link do bên khác tạo thêm như link ngày không làm đổi) rows_loaded cộng rows_rejected cộng rows_skipped bằng rows_total chỉ kiểm khi chuyển sang loaded (không CHECK vì lúc staged chưa đủ); chỉ mục batch_code duy nhất; hai khóa ngoại ON DELETE RESTRICT; ký chỉ khi status loaded và một lần (RPC bảo đảm)",
+        "RLS bật, SELECT cho ROLE-005 và ROLE-007 (aal2 qua get_my_role); ghi chỉ qua rpc_migration_load_batch, rpc_migration_sign_off (security definer, search_path rỗng; thu execute khỏi PUBLIC và anon, grant execute có chủ đích cho authenticated vì script và route gọi bằng JWT ROLE-007 hoặc ROLE-005, role và aal kiểm bên trong hàm; helper nội bộ vẫn private theo E10-DB-01); không grant ghi cho authenticated",
+        "Wave 3 không còn nguồn quyết toán sau Q38 (settlement-summary chỉ đối chiếu); vị trí của deliveries chờ Q41 (có thể là Wave 3); CHECK giữ từ 1 đến 3 theo spec; ghi chú trong tài liệu. Các CHECK không âm của bộ đếm (ngoài rows_skipped) là ràng buộc bổ sung của backlog, không có nguyên văn trong RPA_DB (ghi PREMISE)"
+      ],
+      "depends": [
+        "E10-DB-01",
+        "E10-DB-02"
+      ]
+    },
+    {
+      "key": "E11-DB-02",
+      "type": "db",
+      "special": "di trú dữ liệu ban đầu (ADR-014)",
+      "title": "Migration migration_rejected_records: danh sách loại trừ kèm lý do và cách xử lý",
+      "goal": "Mỗi dòng nguồn không đạt kiểm hợp lệ một dòng, không nạp lặng lẽ.",
+      "specs": [
+        "RPA_DB §4.4, §5",
+        "FR-RPA-008 AC2",
+        "ADR-014 §2 (MIG-02, MIG-04)",
+        "Q42 (đã chốt)"
+      ],
+      "dod": [
+        "Cột theo RPA_DB §4.4: id, batch_id (khóa ngoại migration_batches), source_row_no, entity_type (không CHECK), raw_record JSONB (bản chép dòng staging để dùng sau khi xóa schema staging), reason_code (CHECK sáu giá trị MIG_REQUIRED_MISSING, MIG_PARTICIPANT_UNMAPPED, MIG_DUPLICATE_KEY, MIG_INVALID_FORMAT, MIG_REF_NOT_FOUND, MIG_CONSTRAINT), reason, resolution (CHECK pending, fixed_reloaded, accepted_excluded; mặc định pending), resolved_by (khóa ngoại profiles), resolved_at",
+        "Chỉ mục duy nhất (batch_id, source_row_no), chỉ mục một phần theo batch_id khi resolution là pending (kiểm go hoặc no-go); CHECK (resolution là pending) bằng (resolved_by rỗng) (nguồn chỉ đề xuất cặp này) và bằng (resolved_at rỗng) (ràng buộc bổ sung của backlog, ghi PREMISE); khóa ngoại ON DELETE RESTRICT",
+        "RLS bật, SELECT cho ROLE-005 và ROLE-007; ghi chỉ qua rpc_migration_load_batch (chèn) và rpc_migration_reject_resolve (đặt resolution, resolved_by, resolved_at, chỉ từ pending)"
+      ],
+      "depends": [
+        "E11-DB-01"
+      ]
+    },
+    {
+      "key": "E11-DB-03",
+      "type": "db",
+      "special": "di trú dữ liệu ban đầu (ADR-014)",
+      "title": "Migration migration_record_links: liên kết dòng nguồn với bản ghi hệ thống, chống nạp trùng",
+      "goal": "Bảng chỉ thêm nối khóa nguồn với bản ghi đã tạo; E-09 đọc cho is_migrated.",
+      "specs": [
+        "RPA_DB §4.5, §6",
+        "api-list RPA_RATE_HISTORY_LIST (is_migrated)",
+        "ADR-014 §2"
+      ],
+      "dod": [
+        "Cột theo RPA_DB §4.5: id, batch_id (khóa ngoại migration_batches), source_row_no, source_key, entity_type (CHECK participant, participant_basis, lot, trade, business_day, delivery, delivery_part), entity_id TEXT (không khóa ngoại vì trỏ nhiều bảng, loader bảo đảm tồn tại trong cùng giao dịch), created_at (mặc định now())",
+        "Một dòng nguồn có thể có nhiều link (ví dụ participant và participant_basis, giao hàng và các lần giao) nên số link khác số dòng, bộ đếm của lượt tính theo dòng nguồn (E11-BE-01f); chỉ mục duy nhất (entity_type, source_key) chống nạp trùng; migration_record_links_batch_idx (batch_id) và migration_record_links_entity_idx (entity_type, entity_id) phục vụ is_migrated của E09-BE-10; chỉ thêm: trigger deny_update_delete() (E10-DB-02) và thu update, delete, truncate khỏi service_role",
+        "RLS bật, SELECT cho ROLE-005 và ROLE-007; ROLE-006 và các role khác không đọc trực tiếp (E09-BE-10 đọc qua hàm definer rate_history_trade)"
+      ],
+      "depends": [
+        "E11-DB-01",
+        "E10-DB-02"
+      ]
+    },
+    {
+      "key": "E11-DB-04",
+      "type": "db",
+      "special": "di trú dữ liệu ban đầu (ADR-014)",
+      "title": "Migration schema migration_staging và năm bảng stg_*: chép thô dòng nguồn",
+      "goal": "Schema staging riêng, không cấp quyền cho client, xóa sau go-live.",
+      "specs": [
+        "RPA_DB §4.6..§4.10, khuôn chung stg_*",
+        "RPA_MIGRATION_LOAD_TECH §4.1",
+        "Q29 (chờ E11-CLR-02)"
+      ],
+      "dod": [
+        "Schema migration_staging với năm bảng stg_actors, stg_lots, stg_trades, stg_deliveries, stg_settlement_summary: khóa chính (batch_id, source_row_no), khóa ngoại batch_id tới public.migration_batches ON DELETE RESTRICT; mọi cột dữ liệu là text, nullable, không CHECK và không ép kiểu (giữ giá trị bẩn để loader ghi lý do loại)",
+        "Cột dữ liệu của từng bảng theo header đã chốt ở E11-CLR-02 (hợp đồng đầu vào chốt ở E11-CLR-02 từ nguồn được phép đọc và quyết định thiết kế; fixture ở E11-QA-02 chỉ tự dựng giá trị theo hợp đồng này, không chép header hay dữ liệu đề gốc vào repo public); stg_settlement_summary chỉ để so tổng tiền theo ngày (Q38): không bảng nghiệp vụ đích, không sinh migration_record_links, không tính vào rows_loaded hay rows_rejected; incentive-rate-table.csv không có bảng staging",
+        "Schema không nằm trong schema PostgREST công bố, không grant cho anon và authenticated, chỉ hàm loader security definer đọc và ghi; có thể xóa nguyên schema sau go-live (E11-DOC-03) mà không để lại phụ thuộc"
+      ],
+      "depends": [
+        "E11-DB-01",
+        "E11-CLR-02"
+      ]
+    },
+    {
+      "key": "E11-BE-01",
+      "type": "be",
+      "special": "di trú dữ liệu ban đầu (ADR-014)",
+      "parent_of": [
+        "E11-BE-01a",
+        "E11-BE-01b",
+        "E11-BE-01c",
+        "E11-BE-01d",
+        "E11-BE-01e",
+        "E11-BE-01f"
+      ],
+      "title": "RPA_MIGRATION_LOAD: rpc_migration_load_batch (loader theo từng bước)",
+      "goal": "Một RPC security definer chạy qua script, nạp dữ liệu có staging, đối chiếu, từng ngày một giao dịch; chia 6 sub-issue.",
+      "specs": [
+        "RPA_MIGRATION_LOAD_TECH §2..§4",
+        "ADR-014 §2, §3",
+        "FR-RPA-008 AC1..AC5",
+        "ADR-002 R2, R3, R8"
+      ],
+      "dod": [
+        "Hoàn thành khi 6 sub-issue xong"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E11-BE-01a",
+      "type": "be",
+      "special": "di trú dữ liệu ban đầu (ADR-014)",
+      "title": "Loader (a): khung RPC, kiểm aal và role, thứ tự khóa, quyền hàm",
+      "goal": "Chữ ký, bộ điều phối p_step và các kiểm tra chung trước mọi bước.",
+      "specs": [
+        "RPA_MIGRATION_LOAD_TECH §4.1 (bảng Error), §4.3 (thứ tự khóa)",
+        "ADR-002 R2, R3, R8",
+        "ADR-010 R4",
+        "CORE_DB (Thứ tự khóa chuẩn)"
+      ],
+      "dod": [
+        "rpc_migration_load_batch(p_batch_code, p_step, p_payload, p_business_date) là hàm security definer, search_path rỗng, thu execute khỏi PUBLIC và anon, grant execute có chủ đích cho authenticated (script gọi bằng JWT ROLE-007 aal2, không dùng khóa secret; role và aal kiểm bên trong, thứ tự bên dưới); helper nội bộ vẫn private; sau go-live thu execute khỏi authenticated (E11-DOC-03); bước nhận giá trị stage, validate, load_wave1, load_day, finalize, rollback, fail (hai bước load_wave1 và rollback là bổ sung ghi ở E11-DOC-01)",
+        "Kiểm theo thứ tự: aal khác aal2 thì {ok:false, code:'MFA_REQUIRED'} trước, rồi has_role ROLE-007 sai thì FORBIDDEN (ROLE-005 gọi loader bị FORBIDDEN); p_step lạ hoặc payload hỏng thì VALIDATION kèm fields; không có lượt cho validate, load, finalize thì NOT_FOUND",
+        "Thứ tự khóa của RPC: khóa mọi lượt trong tập theo thứ tự ổn định (batch_code tăng dần) bằng migration_batches FOR UPDATE (hai script truyền tập lượt thứ tự khác nhau không deadlock) và kiểm mode và trạng thái của mọi lượt trong tập (mọi lượt cùng mode, đã validated), rồi business_days (chèn business_date on conflict do nothing rồi FOR UPDATE; không dùng current_business_day() vì gắn hôm nay), rồi hàng nghiệp vụ, advisory lock write_audit lấy cuối cùng; hai script cùng lượt tuần tự hóa nhờ khóa lượt, hai lượt khác nhau cùng ngày nhờ khóa ngày",
+        "Trigger khóa ngày và audit của bảng đích không bị tắt (ADR-014 §3); loader không đi qua RPC nghiệp vụ; mã lỗi trả theo {ok:false, code, params?, fields?}, không trả chi tiết SQL; log category migration, msg migration.stage ok, migration.load_day ok hoặc failed, migration.finalize ok, không ghi giá trị dòng, tên participant hay số tiền",
+        "Bước fail (bổ sung ghi ở E11-DOC-01): entry point trong cùng RPC, kiểm aal rồi ROLE-007 như mọi bước, đặt status failed kèm mã lỗi không dữ liệu thô khi script xác nhận lỗi không phục hồi (p_payload mang mã lỗi); chỉ từ staged hoặc validated, idempotent; không dùng khi chỉ mất phản hồi sau commit (lời gọi đã commit thì resume, không đánh dấu failed); không cấp quyền UPDATE bảng hay khóa secret cho script"
+      ],
+      "depends": [
+        "E11-DB-01",
+        "E11-DB-02",
+        "E11-DB-03",
+        "E11-DB-04",
+        "E10-DB-02",
+        "E10-DB-03",
+        "E10-AUD-02",
+        "E10-LOG-01",
+        "E11-DOC-01"
+      ],
+      "parent": "E11-BE-01"
+    },
+    {
+      "key": "E11-BE-01b",
+      "type": "be",
+      "special": "di trú dữ liệu ban đầu (ADR-014)",
+      "title": "Loader (b): bước stage, chép dòng nguồn vào staging",
+      "goal": "Nhận khối 1.000 dòng, kiểm lượt và điều kiện Wave, chèn staging idempotent.",
+      "specs": [
+        "RPA_MIGRATION_LOAD_TECH §4.1",
+        "FR-RPA-008 AC1, AC3",
+        "Q29 (chờ E11-CLR-02)"
+      ],
+      "dod": [
+        "Đầu vào p_payload {wave, mode, source_name, source_file_sha256, entity, rows[{source_row_no, cột}]}; payload hỏng (thiếu source_row_no, wave ngoài 1 đến 3, SHA-256 không đủ 64 hex, header lạ so với khuôn đã chốt) thì VALIDATION kèm fields; chèn stg_* bằng on conflict (batch_id, source_row_no) do nothing nên gửi lại khối sau lỗi mạng không nhân đôi; rows_total chỉ cộng số dòng thực sự chèn mới (gửi lại khối không tăng)",
+        "Cùng batch_code nhưng source_file_sha256, wave hoặc mode khác thì CONFLICT (không trộn hai tệp); lượt đã quá staged thì INVALID_STATE; Wave lớn hơn 1 mà chưa có lượt Wave trước ở trạng thái loaded cùng mode thì INVALID_STATE; lượt production chỉ chạy được khi có bằng chứng rehearsal đã ký theo quyết định ở E11-DOC-03: mặc định theo TECH là lượt rehearsal cùng source_file_sha256 đã có signed_off_by trong cùng cơ sở dữ liệu; rehearsal ở staging và production ở môi trường khác nhau nên bằng chứng (mã lượt rehearsal, SHA-256 tệp đã che, người ký, ngày ký) được ROLE-005 xác nhận và ghi vào lượt production cùng audit, không sao chép dữ liệu cá nhân thật sang staging",
+        "Tạo hoặc cập nhật migration_batches ở trạng thái staged; không CHECK, không ép kiểu ở staging; một khối lớn hơn 1.000 dòng hoặc trùng source_row_no trong cùng khối được xử lý có hợp đồng rõ (từ chối hoặc bỏ qua) ghi ở E11-DOC-01"
+      ],
+      "depends": [
+        "E11-BE-01a",
+        "E11-DOC-03"
+      ],
+      "parent": "E11-BE-01"
+    },
+    {
+      "key": "E11-BE-01c",
+      "type": "be",
+      "special": "di trú dữ liệu ban đầu (ADR-014)",
+      "title": "Loader (c): bước validate, mapping và cleansing, ghi danh sách loại trừ",
+      "goal": "Áp quy tắc MIG-02 lên toàn bộ dòng staging của lượt.",
+      "specs": [
+        "RPA_MIGRATION_LOAD_TECH §4.2",
+        "FR-RPA-008 AC2",
+        "ADR-014 §2 (MIG-02), §4",
+        "DS-DIRTY-01"
+      ],
+      "dod": [
+        "Lượt không ở staged thì INVALID_STATE, không có lượt thì NOT_FOUND; mỗi dòng áp bộ quy tắc của E11-DOC-02; dòng lỗi vào migration_rejected_records (raw_record là bản chép dòng staging, reason_code thuộc sáu mã, reason, resolution pending), không nạp lặng lẽ; rows_rejected và source_total_amount được tính; status chuyển validated",
+        "Tham chiếu chéo (bên mua, lot của giao dịch) tra theo source_key (không tra mã hiện hành) trong tập gồm migration_record_links đã có (Wave trước và lượt trước) và các dòng staging đã qua kiểm cùng đợt (cùng Wave 2: giao dịch tham chiếu lot, giao hàng tham chiếu giao dịch), dùng kế hoạch nạp theo ngày để thứ tự phụ thuộc hợp lệ; lỗi bẩn đã biết: mã participant lệch giữa inventory và actors là MIG_PARTICIPANT_UNMAPPED, khóa lot trùng trong ngày (mặc định giữ dòng đầu) là MIG_DUPLICATE_KEY, trường quan trọng trống là MIG_REQUIRED_MISSING, giao hàng part_no ngoài 1 đến 5 hoặc số lượng không dương là MIG_CONSTRAINT",
+        "Trạng thái participant lấy theo nguồn và không áp quy tắc 許可 và 承認 hiện hành (ADR-004); chạy lại validate cho lượt đã validated thì xử lý theo hợp đồng DOC-01 (INVALID_STATE hoặc idempotent), không nhân đôi dòng loại trừ",
+        "Dựng kế hoạch nạp theo ngày cho tập lượt cùng đợt (ngày của từng lot, giao dịch, giao hàng, lần giao) và báo dòng không xếp được vào ngày nào là MIG_REF_NOT_FOUND hoặc MIG_REQUIRED_MISSING"
+      ],
+      "depends": [
+        "E11-BE-01b",
+        "E11-DOC-02"
+      ],
+      "parent": "E11-BE-01"
+    },
+    {
+      "key": "E11-BE-01d",
+      "type": "be",
+      "special": "di trú dữ liệu ban đầu (ADR-014)",
+      "title": "Loader (d): bước load_wave1, nạp participant và căn cứ tham gia (Wave 1)",
+      "goal": "Nạp danh sách participant và căn cứ không gắn ngày nghiệp vụ trong một giao dịch.",
+      "specs": [
+        "RPA_MIGRATION_LOAD_TECH §3 (Wave 1), §4.2 (bước 4)",
+        "ADR-014 §2, §4",
+        "PAU_DB (participants, participant_bases)",
+        "ADR-004"
+      ],
+      "dod": [
+        "Chỉ chạy khi lượt Wave 1 ở validated (INVALID_STATE nếu không); mỗi dòng đạt tạo participants và participant_bases đúng ràng buộc hiện hành (nhóm không đổi, căn cứ khớp nhóm, một căn cứ hiện hành, mã participant giữ mã gốc của nguồn không dùng participant_code_seq), kèm migration_record_links entity_type participant và participant_basis; dòng đã có link thì bỏ qua (idempotent)",
+        "Hai trigger participants_guard và participant_bases_match_group vẫn bật; dòng vi phạm bị chặn ở bước validate (MIG_CONSTRAINT) chứ không làm hỏng giao dịch; vi phạm sót thì rollback cả giao dịch Wave 1 và trả INTERNAL_ERROR kèm pgCode ở log; ghi một audit cấp lô trong cùng giao dịch Wave 1 (action migration.wave_loaded, entity_type migration_batch, bổ sung danh mục AUDIT_DB §4.1.1 và ghi PREMISE) để Wave 1 đã commit không thiếu audit nếu lượt dừng trước finalize; không giả tạo lịch sử nghiệp vụ từng dòng; audit cấp lô cuối vẫn ghi ở finalize",
+        "Không tắt trigger; chèn participant_status_history theo PAU_DB §4.4 cho bản ghi di trú trong cùng giao dịch (from_status rỗng, transition migrate, basis_id, changed_by là người chạy), không giả tạo các lần tạm dừng hoặc xét duyệt trong quá khứ không có nguồn; chạy lại không nhân đôi lịch sử (dòng đã có link bỏ qua); trạng thái nguồn giữ nguyên để ROLE-005 rà sau nạp (E11-DOC-03); bước này là giả định của backlog vì TECH chỉ mô tả nạp theo ngày (chỗ hở, ghi PREMISE)"
+      ],
+      "depends": [
+        "E11-BE-01c",
+        "E01-DB-02",
+        "E01-DB-03"
+      ],
+      "parent": "E11-BE-01"
+    },
+    {
+      "key": "E11-BE-01e",
+      "type": "be",
+      "special": "khóa ngày hai lớp (F-018)",
+      "title": "Loader (e): bước load_day, nạp lot, giao dịch, giao hàng của một ngày rồi khóa",
+      "goal": "Một ngày nghiệp vụ một giao dịch: tạo ngày open, nạp, chuyển locked với lần khóa source migration.",
+      "specs": [
+        "RPA_MIGRATION_LOAD_TECH §4.3",
+        "ADR-014 §2, §3",
+        "CORE_DB (business_days, business_day_locks)",
+        "ADR-005 R5",
+        "Q66, Q67, Q78 (Q66, Q78 đã chốt)"
+      ],
+      "dod": [
+        "Đầu vào p_business_date dạng ISO và tập mã lượt cùng đợt (lot, giao dịch, giao hàng của ngày, theo kế hoạch dựng ở validate); nạp trong một giao dịch mọi thực thể phụ thuộc của ngày theo thứ tự lot, giao dịch, giao hàng, lần giao rồi mới khóa (không nạp bổ sung vào ngày đã khóa theo Q78); mỗi link ghi batch_id của tệp gốc; lượt không ở validated thì INVALID_STATE; p_business_date không trước ngày cutover (Q67, E11-CLR-04) thì VALIDATION; ngày đã locked bởi lần khóa source live hoặc đang open hoặc reopened do vận hành thật thì DAY_LOCKED với params [business_date, status], không ghi",
+        "Ngày mới: chèn business_days ở trạng thái open, nạp lot, giao dịch, giao hàng và lần giao giữ mã gốc của nguồn (lot_code, trade_code; riêng delivery_code sinh từ delivery_code_seq trừ khi tệp có mã khớp DLV-NNNNNN, Q47), actor là ROLE-007 chạy, mỗi bản ghi chèn migration_record_links, dòng đã có link bỏ qua; thứ tự giữa các thực thể theo phụ thuộc khóa ngoại; mọi CHECK, khóa ngoại, duy nhất và trigger của bảng đích vẫn áp",
+        "Đóng ngày: status locked (trigger business_days_guard_transitions cho open sang locked), closed_by, closed_at, một business_day_locks lock_no 1 source migration; write_audit migration.day_loaded (entity_type business_day, after gồm batch_code, số dòng, tổng tiền) ở bước cuối; không chèn outbox business_day_locked, không tính thưởng, không sinh báo cáo cho ngày lịch sử (Q66)",
+        "Ngày đã locked bởi lần khóa source migration (chạy lại): không nạp bổ sung, dòng chưa có link vào loại trừ MIG_CONSTRAINT và giữ trạng thái locked (Q78 đã chốt, không mở nhánh miễn trừ khóa ngày cho loader); vi phạm CHECK, khóa ngoại hoặc duy nhất sót thì rollback cả ngày (ngày khác không ảnh hưởng), script ghi ngày lỗi, sửa quy tắc rồi chạy lại ngày đó; tham số ngày ghi DD/MM/YYYY ở biên bản nhưng gửi ISO",
+        "Sau nạp: available_qty và status của lot khớp quyết định DOC-02 và bất biến số dư với giao dịch và giữ chỗ lịch sử (CHECK chỉ chặn số dư ngoài khoảng, không phát hiện quên trừ giữ chỗ nên có kiểm riêng); thời điểm confirmed_at, completed_at, recorded_at lấy từ nguồn theo quyết định DOC-02; một lot dùng ở nhiều ngày chỉ nạp một lần"
+      ],
+      "depends": [
+        "E11-BE-01d",
+        "E02-DB-01",
+        "E03-DB-01",
+        "E07-DB-01",
+        "E07-DB-02",
+        "E10-DB-04",
+        "E04-DB-04"
+      ],
+      "parent": "E11-BE-01"
+    },
+    {
+      "key": "E11-BE-01f",
+      "type": "be",
+      "special": "di trú dữ liệu ban đầu (ADR-014)",
+      "title": "Loader (f): bước finalize và rollback, bất biến số dòng, audit cấp lô",
+      "goal": "Chốt lượt: đếm, cộng tiền, kiểm bất biến, audit cấp lô; hoặc đóng lượt chưa nạp bằng rolled_back.",
+      "specs": [
+        "RPA_MIGRATION_LOAD_TECH §4.4, §4.5 (Rollback)",
+        "FR-RPA-008 AC3, AC4",
+        "ADR-014 §2 (MIG-03, MIG-04)",
+        "ADR-008"
+      ],
+      "dod": [
+        "finalize: đơn vị đếm là dòng nguồn (source_row_no), không phải số link: rows_loaded là số dòng nguồn của lượt đã có ít nhất một link do lượt này tạo (một dòng actors tạo participant và căn cứ vẫn tính một dòng, hai link), rows_skipped là số dòng đã có link từ lượt trước (chạy lại cùng tệp), rows_rejected là số dòng loại trừ; dòng của stg_settlement_summary không tính vào rows_total, rows_loaded, rows_rejected, rows_skipped; loaded_total_amount là tổng tiền của các giao dịch theo source_key của mọi dòng đã nạp hoặc bỏ qua của lượt (nên lượt chạy lại sạch không bị báo lệch giả); rows_loaded cộng rows_rejected cộng rows_skipped khác rows_total (còn ngày chưa nạp) thì INVALID_STATE kèm params ngày thiếu; đạt thì status loaded, finished_at; write_audit migration.batch_loaded (entity_type migration_batch, after gồm batch_code, wave, mode, source_name, source_file_sha256, rows_total, rows_loaded, rows_rejected, rows_skipped, source_total_amount, loaded_total_amount; before rỗng)",
+        "Đối chiếu MIG-03 theo ngày nghiệp vụ: số bản ghi và tổng tiền nguồn (stg_trades; stg_settlement_summary chỉ là số tham chiếu để so tổng tiền, không nạp) so với hệ thống (bảng nghiệp vụ ghép link); trả cho script đủ dữ liệu để dựng biên bản; lệch khác 0 phải có note giải trình ở bước ký",
+        "rollback: phân loại theo có ghi bảng đích hay chưa (không chỉ theo ngày): chỉ cho lượt chưa có link nào (chưa ghi đích: Wave 1 chưa commit, chưa nạp ngày nào, status không phải loaded): đặt rolled_back và xóa stg_* của lượt; lượt đã ghi đích (Wave 1 đã commit hoặc đã nạp ngày) thì từ chối (INVALID_STATE): đi tiếp bằng finalize hoặc khôi phục bản sao lưu theo DOC-03; lượt failed chỉ ghi qua bước fail của E11-BE-01a khi lỗi không phục hồi (không phải lỗi tạm hay mất phản hồi sau commit), nguyên nhân ở log, không có dữ liệu thô",
+        "finalize gọi lần hai khi đã loaded trả kết quả cũ, không audit lần hai, không đổi số liệu đã ký; lượt chưa loaded gọi finalize thiếu ngày thì INVALID_STATE kèm ngày thiếu và có thể resume",
+        "Điều hòa sequence mã sau nạp: participant_code_seq, trade_code_seq, lot_code_seq, delivery_code_seq (và sequence mã khác của bảng đích) được đặt trên mức an toàn so với mã nguồn khớp mẫu đã nạp (không hạ sequence đã dùng, không đổi mã lịch sử, không cấp execute nextval cho client) để giao dịch sống đầu tiên không trùng mã"
+      ],
+      "depends": [
+        "E11-BE-01e",
+        "E11-DOC-03"
+      ],
+      "parent": "E11-BE-01"
+    },
+    {
+      "key": "E11-BE-02",
+      "type": "be",
+      "special": "MFA",
+      "title": "RPA_MIGRATION_BATCH_LIST: đọc lượt nạp và dòng loại trừ cho ROLE-005 và ROLE-007",
+      "goal": "API đọc kết quả di trú dùng cho đối chiếu MIG-03.",
+      "specs": [
+        "api-list RPA_MIGRATION_BATCH_LIST",
+        "RPA_DB §4.3, §4.4",
+        "FR-RPA-008 AC3",
+        "api-design/_index §2.3"
+      ],
+      "dod": [
+        "Route GET /api/migration-batches: 401, 403 (ngoài ROLE-005 và ROLE-007), MFA_REQUIRED (aal2); query wave, mode, status, limit, cursor sai thì VALIDATION; items[] gồm id, batch_code, wave, mode, status, source_name, rows_total, rows_loaded, rows_rejected, rows_skipped, source_total_amount, loaded_total_amount, signed_off_by_name, signed_off_at, note, started_at, finished_at; sắp (started_at, id) giảm dần, keyset 20 dòng",
+        "Cùng route đọc dòng loại trừ của một lượt qua tham số batchId: items[] gồm id (khóa dùng cho API resolve), batch_id, source_row_no, source_key, entity_type, reason_code, reason, resolution, resolved_by_name, resolved_at; không trả toàn bộ raw_record để tránh lộ dữ liệu cá nhân mà trả phần chiếu có kiểm soát gồm các trường cần để ROLE-005 xác nhận fixed_reloaded hoặc accepted_excluded và đối chiếu theo ngày (danh sách trường theo entity_type do E11-DOC-01 và E11-CLR-06 chốt; biên bản ngoài hệ thống chỉ bổ sung bằng chứng, không thay RPC ký, resolve và audit); keyset theo (id); chỉ đọc, không ghi audit",
+        "Chỉ số tiền và đếm, không dữ liệu cá nhân của participant; tên người ký qua view profiles_brief (không đọc profiles trực tiếp)"
+      ],
+      "depends": [
+        "E11-DB-01",
+        "E11-DB-02",
+        "E11-DOC-01",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E10-API-03",
+        "E01-BE-06"
+      ]
+    },
+    {
+      "key": "E11-BE-03",
+      "type": "be",
+      "special": "MFA",
+      "title": "RPA_MIGRATION_SIGN_OFF: rpc_migration_sign_off (ROLE-005 ký số tiền)",
+      "goal": "Ký một lần cho lượt đã loaded, ghi chú bắt buộc khi lệch tiền.",
+      "specs": [
+        "api-list RPA_MIGRATION_SIGN_OFF",
+        "RPA_MIGRATION_LOAD_TECH §4.4 (bước 3)",
+        "RPA_DB §4.3",
+        "ADR-014 §2 (MIG-03)"
+      ],
+      "dod": [
+        "Route POST /api/migration-batches/[id]/sign-off, body note: 401, 403, MFA_REQUIRED; RPC kiểm aal trước has_role (ROLE-005); lượt chưa loaded hoặc đã ký thì INVALID_STATE, không có lượt thì NOT_FOUND; loaded_total_amount khác source_total_amount mà note rỗng thì VALIDATION",
+        "Ghi signed_off_by, signed_off_at và note trong một giao dịch cùng write_audit migration.sign_off (entity_type migration_batch); ký một lần nên hai ROLE-005 ký đồng thời thì một thành công và một INVALID_STATE (khóa dòng lượt); lượt production chỉ ký khi bằng chứng rehearsal theo hợp đồng của E11-DOC-03 đã được ghi vào lượt (không bắt buộc có dòng rehearsal cùng SHA-256 trong cơ sở dữ liệu production khi rehearsal chạy ở môi trường khác); ý nghĩa xác nhận của ROLE-005 và nơi lưu bằng chứng theo DOC-03; điều kiện kiểm ở E11-BE-01b",
+        "RPC security definer, search_path rỗng; không đổi số liệu lượt; ngày trong note hiển thị DD/MM/YYYY ở biên bản, lưu ISO"
+      ],
+      "depends": [
+        "E11-DB-01",
+        "E11-DOC-01",
+        "E10-AUD-02",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06",
+        "E11-DOC-03"
+      ]
+    },
+    {
+      "key": "E11-BE-04",
+      "type": "be",
+      "special": "MFA",
+      "title": "RPA_MIGRATION_REJECT_RESOLVE: rpc_migration_reject_resolve (xử lý dòng loại trừ)",
+      "goal": "ROLE-005 đặt fixed_reloaded hoặc accepted_excluded cho từng dòng loại trừ.",
+      "specs": [
+        "api-list RPA_MIGRATION_REJECT_RESOLVE",
+        "RPA_MIGRATION_LOAD_TECH §4.4 (bước 3)",
+        "RPA_DB §4.4",
+        "ADR-014 §2 (MIG-04)",
+        "Q42 (đã chốt)"
+      ],
+      "dod": [
+        "Route POST /api/migration-rejected-records/[id]/resolve, body resolution (fixed_reloaded hoặc accepted_excluded) và note: 401, 403 (chỉ ROLE-005 theo Q42 đã chốt), MFA_REQUIRED; dòng không còn pending thì INVALID_STATE, không có dòng thì NOT_FOUND, resolution ngoài hai giá trị thì VALIDATION",
+        "Ghi resolution, resolved_by, resolved_at trong giao dịch cùng write_audit migration.reject_resolve (entity_type migration_rejected_record); chỉ từ pending và chỉ một lần (hai ROLE-005 xử lý đồng thời thì một thành công); fixed_reloaded chỉ đặt được khi dòng đó đã có migration_record_links theo source_key (đã nạp lại thành công bởi lần chạy sửa của loader), không chỉ đổi nhãn pending; dòng thuộc ngày đã khóa bởi lần khóa migration trước lần nạp sửa thì không nạp lại được (Q78, vào MIG_CONSTRAINT, không có link) nên chỉ accepted_excluded hoặc quyết định no-go và khôi phục theo DOC-03, không nhánh miễn trừ; ngược lại dòng được nạp thành công bởi một lần nạp sửa hợp lệ (ngày chưa khóa lúc đó, nay có thể đã khóa) vẫn xác nhận được fixed_reloaded vì link theo đúng source_key của dòng tồn tại",
+        "Dòng còn pending không có kế hoạch được duyệt là điều kiện no-go (DOC-03); RPC kiểm aal trước has_role"
+      ],
+      "depends": [
+        "E11-DB-02",
+        "E11-DOC-01",
+        "E10-AUD-02",
+        "E10-PRX-01",
+        "E10-PRX-02",
+        "E10-API-01",
+        "E10-API-02",
+        "E01-BE-06"
+      ]
+    },
+    {
+      "key": "E11-BE-05",
+      "type": "be",
+      "special": "di trú dữ liệu ban đầu (ADR-014)",
+      "title": "Loader script: công cụ dòng lệnh của ROLE-007 (đăng nhập TOTP, khối 1.000 dòng, biên bản)",
+      "goal": "Script thực thi chạy trên máy được ủy quyền, gọi rpc_migration_load_batch tuần tự.",
+      "specs": [
+        "RPA_MIGRATION_LOAD_TECH §3, §4.1 (bước 1), §4.3",
+        "ADR-014 §2",
+        "ARCH-01 C11",
+        "NFR-SEC-04"
+      ],
+      "dod": [
+        "Script (thư mục scripts/migration/) nhận tệp nguồn, batch_code, wave, mode, source_name; đăng nhập bằng tài khoản ROLE-007 có TOTP (không dùng khóa secret), tính SHA-256 của tệp, đọc đúng mã hóa chốt ở E11-CLR-02, gửi khối 1.000 dòng cho bước stage, rồi gọi lần lượt validate, load_wave1 hoặc load_day từng ngày tăng dần, finalize",
+        "Lỗi mạng thì gửi lại khối (idempotent nhờ khóa staging); ngày lỗi thì dừng, ghi ngày lỗi và mã, cho phép chạy lại đúng ngày đó sau khi sửa quy tắc; hiển thị mã lỗi của {ok:false, code} (MFA_REQUIRED, FORBIDDEN, VALIDATION, CONFLICT, DAY_LOCKED, INVALID_STATE, NOT_FOUND) rõ ràng, không in dữ liệu dòng hay số tiền ngoài biên bản",
+        "Biên bản đối chiếu MIG-03 theo ngày nghiệp vụ (số bản ghi, tổng tiền nguồn và hệ thống, chênh lệch, số dòng loại trừ theo mã) xuất ngày dạng DD/MM/YYYY; không lưu mật khẩu, TOTP, token vào tệp hay log (log category migration, không dữ liệu cá nhân); script không nằm trong gói client và không có trên production sau go-live (E11-DOC-03)",
+        "Điều phối theo đợt (không chạy cả chuỗi cho từng tệp): đọc cấu hình đợt (danh sách tệp cần cho các ngày, mỗi tệp một batch_code và SHA-256 riêng), stage toàn bộ tệp của đợt trước, gọi validate cho từng lượt và xác nhận kế hoạch nạp theo ngày hoàn tất, rồi mới gọi load_day cho từng ngày với tập mã lượt cùng đợt (cùng một tập, cùng một thứ tự ở mọi lời gọi), cuối cùng finalize từng lượt; script không bao giờ gọi load_day khi còn tệp cần cho ngày đó chưa stage và validate",
+        "Lỗi không phục hồi (không phải lỗi tạm, không phải mất phản hồi sau commit) thì gọi bước fail của loader rồi dừng; lỗi tạm hoặc mất phản hồi thì resume cùng batch_code, không gọi fail"
+      ],
+      "depends": [
+        "E11-BE-01f",
+        "E11-DOC-03",
+        "E11-BE-01c"
+      ]
+    },
+    {
+      "key": "E11-QA-01",
+      "type": "qa",
+      "special": "di trú dữ liệu ban đầu (ADR-014)",
+      "title": "QA loader: ma trận lỗi, quyền, đồng thời và idempotent trên PostgreSQL",
+      "goal": "Kiểm thử RPC loader và hai RPC ROLE-005 với phiên thật của từng role.",
+      "specs": [
+        "RPA_MIGRATION_LOAD_TECH §5 (test case gợi ý, Unit và Idempotent)",
+        "ADR-014",
+        "ADR-002 R8"
+      ],
+      "dod": [
+        "Lỗi: aal1 thì MFA_REQUIRED trước FORBIDDEN; ROLE-005 gọi loader thì FORBIDDEN; ký lượt chưa loaded hoặc ký lần hai thì INVALID_STATE; ký khi lệch tiền thiếu note thì VALIDATION; resolve dòng không pending thì INVALID_STATE; cùng batch_code khác SHA-256, wave hoặc mode thì CONFLICT; Wave 2 trước Wave 1 loaded thì INVALID_STATE; production khi chưa có rehearsal đã ký thì INVALID_STATE; ngày không trước cutover thì VALIDATION; ngày locked live hoặc open do vận hành thật thì DAY_LOCKED",
+        "Đồng thời: hai script cùng lượt tuần tự hóa, hai lượt cùng ngày tuần tự hóa, hai ROLE-005 ký hoặc resolve cùng đối tượng chỉ một thành công; không deadlock với rpc_day_close của ngày khác (thứ tự khóa chuẩn); một ngày lỗi CHECK thì rollback cả ngày và các ngày đã nạp không bị ảnh hưởng",
+        "Idempotent: chạy lại toàn bộ cùng tệp cho 0 bản ghi mới, rows_skipped bằng số dòng đã nạp ở lượt trước, bất biến tổng giữ; lượt sửa (fixed_reloaded) chỉ nạp dòng trước đó bị loại; gửi lại khối stage không nhân đôi; quyền hàm: anon gọi loader, sign_off, reject_resolve bị từ chối; ROLE-007 aal2 gọi loader được, ROLE-005 aal2 gọi loader bị FORBIDDEN; ROLE-005 aal2 gọi sign_off và reject_resolve được, ROLE-007 hay role ngoài quyền bị FORBIDDEN, aal1 nhận MFA_REQUIRED; helper nội bộ gọi trực tiếp bằng authenticated bị từ chối; mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả",
+        "fixed_reloaded: dòng đã có link thì đặt được, chưa có link thì bị từ chối; chạy đủ thứ tự: ngày D chưa khóa, nạp sửa thành công (có link, D khóa), ROLE-005 xác nhận fixed_reloaded thì đặt được dù D nay locked; ngược lại D đã khóa từ trước lần sửa thì dòng vẫn MIG_CONSTRAINT, không có link và không đặt được fixed_reloaded (chỉ accepted_excluded); link của dòng khác không đủ để xác nhận dòng này",
+        "Mất phản hồi sau commit rồi gửi lại stage, validate, load_day: không nhân đôi, không tăng rows_total; finalize lặp không audit lần hai; ký xen replay không đổi số đã ký; hai lần chạy sửa liên tiếp cho kết quả như một lần",
+        "Đợt nhiều tệp: ít nhất ba tệp (lot, giao dịch, giao hàng) cùng một ngày nạp trong một giao dịch rồi mới khóa; hai script truyền tập lượt theo thứ tự khác nhau không deadlock; tập lượt lẫn mode hoặc có lượt chưa validated bị từ chối; script chạy lots.csv trước khi stage trades.csv không thể khóa ngày thiếu thực thể (không mở ngoại lệ Q78)",
+        "Bước fail: lỗi không phục hồi ghi failed bền vững kể cả sau rollback của lời gọi lỗi; lỗi tạm resume được; lỗi mạng sau commit không đổi lượt thành failed; role khác ROLE-007 hay aal1 không gọi được; không có đường UPDATE trực tiếp"
+      ],
+      "depends": [
+        "E11-BE-01",
+        "E11-BE-03",
+        "E11-BE-04",
+        "E05-BE-03"
+      ]
+    },
+    {
+      "key": "E11-QA-02",
+      "type": "qa",
+      "special": "di trú dữ liệu ban đầu (ADR-014)",
+      "title": "QA dữ liệu bẩn và đối chiếu: fixture tự dựng theo DS-DIRTY-01, MIG-03",
+      "goal": "Fixture JPY và JST tự viết (không chép tệp đề gốc), phủ lỗi bẩn đã biết và đối chiếu số bản ghi, tổng tiền.",
+      "specs": [
+        "RPA_MIGRATION_LOAD_TECH §5 (DS-DIRTY-01, Đối chiếu MIG-03)",
+        "ADR-014 §1",
+        "FR-RPA-008 AC2, AC3"
+      ],
+      "dod": [
+        "Bộ fixture tự dựng (mã hư cấu, không dữ liệu thật, không chép 付録 C) cho bốn tệp di trú, một tệp đối chiếu settlement và inventory; header khớp khuôn chốt ở E11-CLR-02",
+        "Ca bẩn: mã participant lệch inventory và actors thì MIG_PARTICIPANT_UNMAPPED; cặp lot gần trùng trong ngày thì một nạp một MIG_DUPLICATE_KEY; inventory thiếu người phụ trách hoặc tỷ lệ lỗi thì MIG_REQUIRED_MISSING; giao hàng part_no bằng 6 thì MIG_CONSTRAINT; mọi dòng lỗi vào danh sách loại trừ và không có dòng nào nạp lặng lẽ (tổng nạp, loại, bỏ qua bằng tổng nguồn)",
+        "Đối chiếu MIG-03: fixture sạch cho số bản ghi và tổng tiền theo ngày nguồn bằng hệ thống; fixture có loại trừ cho chênh lệch bằng đúng tổng dòng loại trừ; settlement chỉ để so tổng, không sinh bản ghi nghiệp vụ hay link; mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả",
+        "Đơn vị đếm: một dòng actors tạo participant và căn cứ (hai link) vẫn khớp rows_total, rows_loaded; giao hàng nhiều lần giao, ngày phát sinh và dòng settlement không làm bất biến vỡ; chạy lại lượt sạch cho rows_skipped bằng số dòng đã nạp và đối chiếu tiền không lệch giả",
+        "participant_status_history: mỗi participant di trú có đúng một dòng transition migrate với basis và changed_by đúng; chạy lại không nhân đôi",
+        "Lot dùng ở nhiều ngày: nạp một lần, số dư khớp tổng giữ chỗ và đã bán, không trừ hai lần; giao dịch pending, confirmed, rejected, cancelled và tổng lần giao của giao hàng khớp nguồn"
+      ],
+      "depends": [
+        "E11-BE-01c",
+        "E11-BE-01e",
+        "E11-BE-01f",
+        "E11-DOC-02"
+      ]
+    },
+    {
+      "key": "E11-QA-03",
+      "type": "qa",
+      "special": "audit bất biến + hash-chain (ADR-008)",
+      "title": "QA bất biến sau nạp: ngày khóa, audit, chuỗi băm, không outbox, API ROLE-005",
+      "goal": "Kiểm thử trạng thái dữ liệu sau khi nạp và các API ký, xử lý loại trừ qua trình gọi thật.",
+      "specs": [
+        "RPA_MIGRATION_LOAD_TECH §5 (Bất biến)",
+        "ADR-014 §2",
+        "ADR-006",
+        "ADR-008",
+        "Q66, Q78 (đã chốt)"
+      ],
+      "dod": [
+        "Sau nạp: mọi ngày là locked với lần khóa source migration; sửa trực tiếp giao dịch lịch sử nhận DAY_LOCKED, sửa chỉ bằng 逆仕訳 hoặc 差額記録; không có outbox business_day_locked, không có incentive_results hay report_runs cho ngày lịch sử (Q66); nạp bổ sung vào ngày đã khóa bị MIG_CONSTRAINT (Q78)",
+        "Audit: mỗi ngày có đúng một migration.day_loaded và mỗi lượt đúng một migration.batch_loaded, sign_off và reject_resolve có audit tương ứng; audit_verify_chain() của E-09 cho ok sau nạp (kiểm tích hợp; kiểm nền bằng checker E-10); is_migrated của giao dịch nạp là true theo E09-BE-10",
+        "API ROLE-005 và ROLE-007 từ trình gọi thật: BATCH_LIST đúng cột và quyền (ROLE-007 đọc, không ký; ROLE-001..004, 006 bị chặn), SIGN_OFF và REJECT_RESOLVE đúng mã lỗi và audit; không lộ dữ liệu cá nhân ở BATCH_LIST; mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả"
+      ],
+      "depends": [
+        "E11-QA-01",
+        "E11-BE-02",
+        "E09-BE-07a",
+        "E09-BE-10"
+      ]
+    },
+    {
+      "key": "E11-QA-04",
+      "type": "qa",
+      "special": "di trú dữ liệu ban đầu (ADR-014)",
+      "title": "QA rehearsal và cutover: diễn tập toàn bộ lịch sử trên staging, nhánh no-go và khôi phục",
+      "goal": "Diễn tập theo runbook, đo thời gian và kiểm khôi phục.",
+      "specs": [
+        "RPA_MIGRATION_LOAD_TECH §5 (Rehearsal), §4.5",
+        "ADR-014 §2 (MIG-03, MIG-04)",
+        "FR-RPA-008 AC3, AC4",
+        "NFR-AVL-03"
+      ],
+      "dod": [
+        "Diễn tập trên hai môi trường tách biệt (staging cho rehearsal, môi trường production giả cho lượt production, không chỉ hai mode trong cùng schema): lượt production không chạy khi thiếu bằng chứng rehearsal, tệp cuối khác SHA-256 xử lý đúng theo DOC-03; rehearsal toàn lịch sử theo phạm vi Q9 (E11-CLR-01) trên staging với dữ liệu giả cỡ đại diện: đo tổng thời gian nạp và thời gian từng ngày, ghi cách đo, số liệu, kết quả; ROLE-005 ký lượt rehearsal, sau đó production mới chạy được",
+        "Diễn tập cutover theo DOC-03: đóng băng giả, bản sao lưu trước production, nạp W1 rồi W2, đối chiếu, kiểm chuỗi băm; nhánh no-go: lệch tiền chưa giải trình hoặc dòng pending không kế hoạch thì dừng, khôi phục bản sao lưu và quy trình cũ tiếp tục; kiểm email mốc băm đã gửi sau thời điểm nạp được ghi trong biên bản rollback",
+        "Sau go-live giả: schema migration_staging bị xóa, execute của rpc_migration_load_batch bị thu, loader không gọi được nữa; mỗi ca ghi đầu vào, kết quả mong đợi, tiêu chí đạt; có báo cáo kết quả",
+        "Dừng giữa load_wave1 và finalize: rollback bị từ chối, dữ liệu Wave 1 và audit migration.wave_loaded tồn tại nhất quán, resume bằng finalize hoặc khôi phục bản sao lưu đều đạt",
+        "Sau rehearsal: tạo một participant, lot, giao dịch và giao hàng sống bằng luồng chuẩn, mã sinh không trùng mã lịch sử đã nạp (kể cả mã nguồn khớp mẫu TX-NNNNNN, DLV-NNNNNN)"
+      ],
+      "depends": [
+        "E11-BE-05",
+        "E11-QA-02",
+        "E11-DOC-03",
+        "E10-INF-03",
+        "E09-BE-07a"
+      ]
+    },
+    {
+      "key": "E11-CLR-01",
+      "type": "clarify",
+      "title": "Làm rõ: nguồn baseline và khoảng lịch sử cần di trú (Q9)",
+      "goal": "Q9 còn mở: nguồn nào thuộc baseline và lịch sử bao lâu (FIG-022 ghi 7 năm lịch sử).",
+      "specs": [
+        "REQ-001 §8 Q9 (open)",
+        "FR-RPA-008 AC6",
+        "ADR-014 §2"
+      ],
+      "dod": [
+        "Có quyết định chấp nhận: danh sách nguồn thuộc baseline, khoảng ngày lịch sử mỗi nguồn, người chịu trách nhiệm mỗi nguồn (vai trò); ghi vào PREMISE",
+        "Báo lại E11-DOC-02, E11-QA-04 (cỡ rehearsal) và E10-INF-03 (dung lượng lưu 7 năm); không tự đặt khoảng lịch sử"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E11-CLR-02",
+      "type": "clarify",
+      "title": "Làm rõ: header, mã hóa tệp và quy tắc mapping, cleansing của bốn tệp di trú (Q29)",
+      "goal": "Q29 còn mở (giao Tech Lead chốt ở LAB-5): header và mã hóa tệp; chưa có tiêu chí gộp lot trùng và ánh xạ trạng thái.",
+      "specs": [
+        "REQ-001 §8 Q29 (open)",
+        "RPA_MIGRATION_LOAD_TECH §4.1, §4.2 (bước 3, 4)",
+        "RPA_DB §4.6..§4.10"
+      ],
+      "dod": [
+        "Có quyết định chấp nhận: header và thứ tự cột của bốn tệp (actors, lots, trades, deliveries) và tệp đối chiếu settlement, mã hóa (UTF-8 hay Shift_JIS), tiêu chí gộp lot trùng trong ngày, ánh xạ trạng thái và căn cứ của participant từ nguồn, ánh xạ trạng thái giao dịch lịch sử; ghi vào PREMISE",
+        "Báo lại E11-DB-04, E11-DOC-02, E11-BE-01b..01e, E11-BE-05, E11-QA-02; hợp đồng đầu vào chốt từ nguồn được phép đọc (REQ-001 Q29 ghi lấy header từ cấu trúc nguồn khi dựng) và ghi bằng mã tham chiếu, không chép header hay dữ liệu đề gốc vào repo public"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E11-CLR-03",
+      "type": "clarify",
+      "title": "Làm rõ: tệp giao hàng thuộc Wave nào và cách nạp lần giao (Q41)",
+      "goal": "Q41 còn mở: deliveries.csv thuộc Wave 2 cùng lot và giao dịch hay Wave 3; cấu trúc lần giao (delivery_part) chưa rõ.",
+      "specs": [
+        "REQ-001 §8 Q41 (open)",
+        "RPA_DB §8 (Q41)",
+        "ADR-014 §5 (delivery_code, Q47)"
+      ],
+      "dod": [
+        "Có quyết định chấp nhận (khả thi với Q78: mọi thực thể phụ thuộc của một ngày nạp được trong một giao dịch trước khi khóa): Wave của deliveries.csv, cách tạo delivery_parts từ tệp (tối đa 5 lần giao), nạp ngoại lệ lịch sử (delivery_exceptions) có hay không, mã delivery_code theo mặc định đã chốt ở Q47 (sinh mới từ delivery_code_seq trừ khi nguồn có mã khớp mẫu DLV-NNNNNN), chỉ chốt header và trường hợp dữ liệu tương ứng; ghi vào PREMISE",
+        "Báo lại E11-BE-01e, E11-DOC-02, E11-DOC-03 (thứ tự nạp) và E07-DB-01; không tự đặt Wave"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E11-CLR-04",
+      "type": "clarify",
+      "title": "Làm rõ: ngày cutover, giờ đóng băng nguồn và người ký go hoặc no-go (Q67)",
+      "goal": "Q67 còn mở: ngày cutover là tham số chặn nạp ngày từ cutover trở đi; chưa có giờ đóng băng và người ký phía khách.",
+      "specs": [
+        "REQ-001 §8 Q67 (open)",
+        "RPA_MIGRATION_LOAD_TECH §4.3, §4.5",
+        "ADR-014 §2 (Cutover)"
+      ],
+      "dod": [
+        "Có quyết định chấp nhận: ngày cutover (tham số của load_day), giờ đóng băng nguồn tối trước một 休市日, người chịu trách nhiệm nghiệp vụ duy nhất phía khách ký go hoặc no-go (vai trò), cách xử lý giao dịch ghi giấy trong lúc đóng băng; ghi vào PREMISE",
+        "Báo lại E11-BE-01e, E11-DOC-03, E11-QA-04; không tự đặt ngày hay giờ"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E11-CLR-05",
+      "type": "clarify",
+      "title": "Làm rõ: kết quả 目利き và phiên bản quy chế, tỷ lệ có là loại bản ghi di trú không (Q91)",
+      "goal": "Q91 còn mở: lots.csv có thể chứa kết quả 目利き và phiên bản tỷ lệ nhưng entity_type hiện không có lot_judgment hay rule_version.",
+      "specs": [
+        "REQ-001 §8 Q91 (open)",
+        "RPA_DB §8 (Q91)",
+        "RPA_MIGRATION_LOAD_TECH §5",
+        "ADR-003, Q15"
+      ],
+      "dod": [
+        "Có quyết định chấp nhận: kết quả 目利き (lot_judgments) có nạp hay không (nếu có thì thêm entity_type và quy tắc), phiên bản tỷ lệ và 業務規程 do loader nạp hay do ROLE-006 nhập và duyệt hai người trước go-live (tính vào hạn mức 4 lần mỗi năm); phối hợp E10-CLR-04 và E06-CLR-02; ghi vào PREMISE",
+        "Báo lại E11-DB-03 (CHECK entity_type), E11-DOC-02, E11-BE-01d, E11-BE-01e; không tự nạp phiên bản tỷ lệ để vượt quy trình hai người"
+      ],
+      "depends": []
+    },
+    {
+      "key": "E11-CLR-06",
+      "type": "clarify",
+      "title": "Làm rõ: màn hoặc công cụ cho ROLE-005 xem kết quả di trú và ký (api-list QA-4)",
+      "goal": "Ba API di trú không gắn màn (PREMISE P14) nhưng ROLE-005 phải đọc, ký số tiền và xử lý loại trừ.",
+      "specs": [
+        "api-list QA-4",
+        "REQ-001 §8 Q9",
+        "RPA_DB (Phần không có màn)",
+        "PREMISE P14"
+      ],
+      "dod": [
+        "Có quyết định chấp nhận: ROLE-005 dùng ba API bằng công cụ nào (màn mới có SCREEN_ID, công cụ dòng lệnh dùng chung với loader, hay biên bản ngoài hệ thống), nếu thêm màn thì ghi là thay đổi thiết kế vào PREMISE và tạo issue FE mới; ghi vào PREMISE",
+        "Báo lại E11-DOC-01, E11-BE-02..04, E11-DOC-03; không tự thêm màn khi chưa có quyết định"
+      ],
+      "depends": []
+    }
+  ]
+}
